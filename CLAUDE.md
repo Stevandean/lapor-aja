@@ -33,12 +33,15 @@ Semua fitur berikut **WAJIB** dikerjakan (bukan opsional), didesain rule-based
 (bukan machine learning) sesuai prinsip teknologi tepat guna.
 
 ### Cabang 1 — Deteksi & Klasifikasi Waktu
-- 1a. Klasifikasi status waktu otomatis: 4 level **Aman → Peringatan → Kritis
-  → Terlambat** (saat ini kode cuma punya on_time/at_risk/overdue, PERLU
-  ditambah level "critical" di antara at_risk dan overdue)
+- [x] **1a. SELESAI (2026-09-03)** — Klasifikasi status waktu otomatis 4
+  level **Aman (on_time) → Peringatan (at_risk) → Kritis (critical) →
+  Terlambat (overdue)**. Detail implementasi & rasionalisasi threshold ada
+  di "Progres Sejauh Ini" bagian "FASE FITUR BARU" di bawah.
 - 1b. Ambang batas SLA per kategori laporan (saat ini SLA cuma berbasis
-  priority via tabel `sla_rules`, belum ada override per kategori)
+  priority via tabel `sla_rules`, belum ada override per kategori) —
+  BELUM dikerjakan.
 - 1c. Perhitungan SLA berbasis hari kerja (mengecualikan akhir pekan/libur)
+  — BELUM dikerjakan.
 
 ### Cabang 2 — Notifikasi & Eskalasi
 - 2a. Notifikasi bertingkat sesuai level eskalasi: level 1 → Kasi
@@ -540,10 +543,85 @@ landmine 🟡 lain (Ronde 1, 2, 3) sudah selesai per catatan di atas.
 - [ ] Seed data dummy untuk testing/demo (database MySQL saat ini kosong
   total setelah semua data uji dibersihkan, keputusan sudah diambil untuk
   TIDAK migrasikan data Supabase lama) — belum dikerjakan.
-- [ ] Build 5 cabang fitur baru — belum, menunggu keputusan PDF surat
-  resmi di atas diriset dan diputuskan dulu (semua landmine split-brain
-  migrasi sudah tuntas, jadi ini sekarang murni soal fitur baru, bukan
-  lagi soal database mana yang benar).
+
+**FASE FITUR BARU: DIMULAI (2026-09-03 sesi malam)** — beda karakter dari
+fase sebelumnya (migrasi/refactor): sekarang menambah logika bisnis baru,
+bukan cuma pindah cara bicara ke database. Progres per cabang:
+
+**Cabang 1a — SELESAI.** Status waktu otomatis 4 level (Aman/Peringatan/
+Kritis/Terlambat):
+- `src/lib/sla.ts` (`calculateEffectiveSlaStatus`) — rumus diganti dari
+  "sisa waktu ≤ 25% dari total durasi" (2 level: on_time/at_risk) jadi
+  **persentase waktu terpakai dari total durasi SLA** (`created_at` →
+  `resolution_due_at`), dengan 3 titik potong:
+  - **< 60% terpakai → Aman (on_time)**
+  - **60%–84% terpakai → Peringatan (at_risk)**
+  - **85%–99% terpakai → Kritis (critical)** — level baru
+  - **≥ 100% terpakai (lewat `resolution_due_at`) → Terlambat (overdue)**
+  **Kenapa 60/85/100, bukan 75/90/100 atau simetris lain:** dipilih supaya
+  "Peringatan" muncul lebih awal (60%, bukan mepet ke akhir) — memberi
+  staf desa jendela waktu bertindak SEBELUM laporan masuk fase "Kritis",
+  bukan cuma diberitahu setelah nyaris terlambat. Titik "Kritis" di 85%
+  masih menyisakan sedikit ruang gerak (15% durasi) sebelum benar-benar
+  lewat tenggat. **Catat persis rasionalisasi ini kalau ditanya sidang** —
+  ini keputusan desain, bukan angka sembarang.
+  Enum `SlaStatus`/`SlaAlertType` di `prisma/schema.prisma` SUDAH punya
+  nilai `critical` dari migrasi sebelumnya, jadi 1a murni kerja di
+  application logic (`src/lib/sla.ts`), tidak perlu migration skema baru
+  untuk kolomnya sendiri (migration baru yang dijalankan sesi ini adalah
+  untuk hal lain — lihat poin unique constraint di bawah).
+- **Semua tempat tampil status ini sudah diupdate** (dipetakan lengkap
+  saat riset sebelum implementasi, lihat juga "Kesimpulan dari Task 1"):
+  `village/components/VillageSlaTable.tsx` (badge oranye + ikon
+  `AlertOctagon` untuk Kritis, ditempatkan di antara badge kuning
+  Berisiko dan merah Terlambat), `app/(dashboard)/dashboard/village/sla/
+  page.tsx` (kartu statistik baru "Kritis" di antara "Berisiko" dan
+  "Terlambat", grid 7→8 kolom), `app/(dashboard)/dashboard/admin/
+  reports/[id]/page.tsx` (label "Kritis" ditambah ke `formatEnum` lokal
+  file itu). Warna oranye ditambahkan sebagai token semantik baru
+  (`--critical-50/100/600/700`) di `src/app/globals.css` di dalam blok
+  `@theme inline`, mengikuti pola persis token success/warning/danger/
+  info yang sudah ada (bukan warna Tailwind mentah ditulis inline).
+  Dashboard utama Admin (`dashboard/queries.ts`) SENGAJA tidak disentuh —
+  cuma hitung `isEffectiveSlaOverdue()` (true/false overdue saja), tidak
+  menampilkan 4 level, dan tidak diminta eksplisit.
+- **Bug ikutan yang ditemukan & diperbaiki sekalian** (bukan bagian asli
+  1a, tapi ditemukan saat kerja di file yang sama): tabel
+  `report_sla_alert_notifications` ternyata **tidak pernah punya unique
+  constraint** meski kodenya (`createSlaAlertLock` di
+  `src/features/reports/slaAlertNotifications.ts`) mengasumsikan ada dan
+  menangkap error `P2002` sebagai "duplikat" — tangkapan itu dead code
+  sejak awal, jadi setiap kali alert SLA disapu (tombol manual atau
+  endpoint cron `/api/notifications/sla-alerts`), sistem berpotensi
+  insert baris alert dobel dan kirim ulang email/WhatsApp untuk laporan
+  yang levelnya tidak berubah. Diperbaiki dengan
+  `@@unique([reportId, alertType])` — **SENGAJA TIDAK** menyertakan
+  `escalationLevel` di constraint (itu menentukan SIAPA yang diberi
+  tahu, bukan level keparahan; kalau ikut disertakan, nanti pas Cabang 2
+  bikin `escalationLevel` bervariasi, level keparahan yang sama bisa
+  tercatat berkali-kali dan constraint-nya jadi tidak berguna). Migration
+  baru: `prisma/migrations/20260903211236_add_sla_alert_unique_constraint/`
+  (dibuat manual via `prisma migrate diff` + `prisma migrate deploy`,
+  karena `prisma migrate dev` menolak jalan di shell non-interaktif —
+  bukan mengedit migration lama). `sendSlaAlertNotifications()` sekarang
+  juga memicu alert untuk level "critical", bukan cuma at_risk/overdue.
+  Diverifikasi 3 lapis: insert dobel `(report_id, alert_type)` sengaja
+  dibuat dan ditolak MySQL (`P2002`), insert dengan `alert_type` beda
+  untuk laporan yang sama tetap berhasil (constraint tidak overshoot),
+  dan test fungsional nyata lewat browser (laporan dengan 90% waktu
+  terpakai + klik tombol "Send SLA Alerts" → 1 baris alert `critical`
+  tersimpan).
+- **Diverifikasi visual dengan data nyata**: 4 laporan uji dibuat dengan
+  `created_at`/`resolution_due_at` dimanipulasi supaya jatuh tepat di
+  30%/70%/92%/120% waktu terpakai, discreenshot di halaman Monitoring SLA
+  sebagai Kepala Desa — keempat badge (hijau/kuning/oranye/merah) dan
+  kartu statistik tampil benar di kolom yang tepat. Data uji dibersihkan
+  total setelahnya.
+
+Cabang 1b (ambang batas SLA per kategori) dan 1c (perhitungan berbasis
+hari kerja) — **BELUM dikerjakan**, menyusul di sesi berikutnya.
+
+- [ ] Lanjutkan Cabang 1b & 1c, lalu Cabang 2-5 — belum dikerjakan.
 
 ## Aturan Kerja untuk Claude Code
 
