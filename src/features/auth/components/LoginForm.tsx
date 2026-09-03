@@ -1,111 +1,45 @@
 "use client";
 
-import { useState } from "react";
-import { useRouter, useSearchParams } from "next/navigation";
+import { useActionState, useEffect, useState } from "react";
+import { useSearchParams } from "next/navigation";
 import { Eye, EyeOff, Lock, Mail } from "lucide-react";
 import { toast } from "sonner";
-import { createClient } from "@/src/lib/supabase/client";
-import { getDashboardRouteByRole } from "@/src/lib/constants/routes";
 import { Button } from "@/src/components/ui/Button";
 import { Input } from "@/src/components/ui/Input";
-import type { UserRole } from "@/src/types/profile";
+import { loginUser } from "@/src/features/auth/actions";
+import type { ActionState } from "@/src/types/action";
+
+const initialState: ActionState = {
+  status: "idle",
+  message: "",
+};
 
 export default function LoginForm() {
-  const router = useRouter();
   const searchParams = useSearchParams();
-  const supabase = createClient();
+  const redirectParam = searchParams.get("redirect") || "";
 
-  const [email, setEmail] = useState("");
-  const [password, setPassword] = useState("");
+  const [state, action, isPending] = useActionState(loginUser, initialState);
 
   const [showPassword, setShowPassword] = useState(false);
-  const [loading, setLoading] = useState(false);
 
-  async function handleLogin(event: React.FormEvent<HTMLFormElement>) {
-    event.preventDefault();
+  useEffect(() => {
+    if (!state.message || state.status !== "error") return;
 
-    setLoading(true);
-
-    const { data: authData, error } = await supabase.auth.signInWithPassword({
-      email,
-      password,
+    toast.error("Login gagal", {
+      description: state.message,
     });
-
-    if (error) {
-      setLoading(false);
-      toast.error("Login gagal", {
-        description: translateAuthError(error.message),
-      });
-      return;
-    }
-
-    const user = authData.user;
-
-    if (!user) {
-      await supabase.auth.signOut();
-
-      setLoading(false);
-      toast.error("Login gagal", {
-        description: "Sesi pengguna tidak dapat dibuat.",
-      });
-      return;
-    }
-
-    const { data: profile, error: profileError } = await supabase
-      .from("profiles")
-      .select("role, is_active")
-      .eq("id", user.id)
-      .maybeSingle();
-
-    if (profileError || !profile) {
-      await supabase.auth.signOut();
-
-      setLoading(false);
-      toast.error("Login gagal", {
-        description:
-          "Profil Anda tidak ditemukan. Silakan hubungi administrator.",
-      });
-      return;
-    }
-
-    if (!profile.is_active) {
-      await supabase.auth.signOut();
-
-      setLoading(false);
-      toast.error("Akun dinonaktifkan", {
-        description:
-          "Akun Anda telah dinonaktifkan. Silakan hubungi administrator.",
-      });
-      return;
-    }
-
-    toast.success("Login berhasil", {
-      description: "Mengalihkan ke dashboard Anda.",
-    });
-
-    const redirectParam = searchParams.get("redirect");
-    const safeRedirect =
-      redirectParam && redirectParam.startsWith("/") ? redirectParam : null;
-
-    if (safeRedirect) {
-      router.replace(safeRedirect);
-      router.refresh();
-      return;
-    }
-
-    router.replace(getDashboardRouteByRole(profile.role as UserRole));
-    router.refresh();
-  }
+  }, [state]);
 
   return (
-    <form onSubmit={handleLogin} className="space-y-5">
+    <form action={action} className="space-y-5">
+      <input type="hidden" name="redirect_to" value={redirectParam} />
+
       <div className="relative">
         <Input
           label="Alamat email"
           type="email"
+          name="email"
           placeholder="nama@email.com"
-          value={email}
-          onChange={(event) => setEmail(event.target.value)}
           required
           className="pl-10"
         />
@@ -116,9 +50,8 @@ export default function LoginForm() {
         <Input
           label="Kata sandi"
           type={showPassword ? "text" : "password"}
+          name="password"
           placeholder="Masukkan kata sandi"
-          value={password}
-          onChange={(event) => setPassword(event.target.value)}
           required
           className="pl-10 pr-10"
         />
@@ -141,23 +74,9 @@ export default function LoginForm() {
         </button>
       </div>
 
-      <Button type="submit" className="w-full" isLoading={loading}>
+      <Button type="submit" className="w-full" isLoading={isPending}>
         Masuk
       </Button>
     </form>
   );
-}
-
-function translateAuthError(message: string) {
-  const lowerMessage = message.toLowerCase();
-
-  if (lowerMessage.includes("invalid login credentials")) {
-    return "Email atau kata sandi salah.";
-  }
-
-  if (lowerMessage.includes("email not confirmed")) {
-    return "Email Anda belum dikonfirmasi.";
-  }
-
-  return message;
 }

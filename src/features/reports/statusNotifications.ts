@@ -1,5 +1,20 @@
-import { createAdminClient } from "@/src/lib/supabase/admin";
+import { prisma } from "@/src/lib/prisma";
+import type { Prisma } from "@prisma/client";
 import { sendReportStatusNotificationViaBrevo } from "@/src/lib/email/sendEmail";
+
+async function createNotificationSafe(
+  data: Prisma.NotificationUncheckedCreateInput,
+  errorLabel: string
+) {
+  try {
+    await prisma.notification.create({ data });
+  } catch (error) {
+    console.error(
+      errorLabel,
+      error instanceof Error ? error.message : error
+    );
+  }
+}
 
 type NotifyReporterStatusChangeParams = {
   reportId: string;
@@ -33,48 +48,41 @@ export async function notifyReporterStatusChange({
     return;
   }
 
-  const supabase = createAdminClient();
+  const report = await prisma.report.findUnique({
+    where: { id: reportId },
+    select: {
+      id: true,
+      reportNumber: true,
+      title: true,
+      reporterId: true,
+      manualAddress: true,
+      autoAddress: true,
+      latitude: true,
+      longitude: true,
+    },
+  });
 
-  const { data: report, error: reportError } = await supabase
-    .from("reports")
-    .select(
-      `
-      id,
-      report_number,
-      title,
-      reporter_id,
-      manual_address,
-      auto_address,
-      latitude,
-      longitude
-      `
-    )
-    .eq("id", reportId)
-    .single();
-
-  if (reportError || !report) {
-    console.error(
-      "Failed to fetch report for status notification:",
-      reportError?.message
-    );
+  if (!report) {
+    console.error("Failed to fetch report for status notification: not found");
     return;
   }
 
-  const { data: reporter, error: reporterError } = await supabase
-    .from("profiles")
-    .select("id, full_name, email, notification_email_enabled")
-    .eq("id", report.reporter_id)
-    .single();
+  const reporter = await prisma.profile.findUnique({
+    where: { id: report.reporterId },
+    select: {
+      id: true,
+      fullName: true,
+      email: true,
+      notificationEmailEnabled: true,
+    },
+  });
 
-  if (reporterError || !reporter) {
-    console.error(
-      "Failed to fetch reporter for status notification:",
-      reporterError?.message
-    );
+  if (!reporter) {
+    console.error("Failed to fetch reporter for status notification: not found");
     return;
   }
 
-  if (reporter.notification_email_enabled === false) {
+  if (reporter.notificationEmailEnabled === false) {
     return;
   }
 
@@ -84,15 +92,15 @@ export async function notifyReporterStatusChange({
   }
 
   const reportAddress =
-    report.manual_address ||
-    report.auto_address ||
+    report.manualAddress ||
+    report.autoAddress ||
     `Latitude ${report.latitude}, Longitude ${report.longitude}`;
 
   try {
     await sendReportStatusNotificationViaBrevo({
       reporterEmail: reporter.email,
-      reporterName: reporter.full_name,
-      reportNumber: report.report_number,
+      reporterName: reporter.fullName,
+      reportNumber: report.reportNumber,
       reportTitle: report.title,
       oldStatus,
       newStatus,
@@ -100,27 +108,21 @@ export async function notifyReporterStatusChange({
       reportAddress,
     });
 
-    const { error: notificationError } = await supabase
-      .from("notifications")
-      .insert({
-        user_id: reporter.id,
-        report_id: report.id,
-        recipient_email: reporter.email,
-        subject: `Update Status Laporan ${report.report_number}`,
+    await createNotificationSafe(
+      {
+        userId: reporter.id,
+        reportId: report.id,
+        recipientEmail: reporter.email,
+        subject: `Update Status Laporan ${report.reportNumber}`,
         message:
           note ||
-          `Status laporan ${report.report_number} telah diperbarui menjadi ${newStatus}.`,
+          `Status laporan ${report.reportNumber} telah diperbarui menjadi ${newStatus}.`,
         status: "sent",
-        sent_at: new Date().toISOString(),
-        error_message: null,
-      });
-
-    if (notificationError) {
-      console.error(
-        "Failed to save sent notification:",
-        notificationError.message
-      );
-    }
+        sentAt: new Date(),
+        errorMessage: null,
+      },
+      "Failed to save sent notification:"
+    );
   } catch (error) {
     const errorMessage =
       error instanceof Error
@@ -129,27 +131,21 @@ export async function notifyReporterStatusChange({
 
     console.error("Failed to send report status notification:", errorMessage);
 
-    const { error: notificationError } = await supabase
-      .from("notifications")
-      .insert({
-        user_id: reporter.id,
-        report_id: report.id,
-        recipient_email: reporter.email,
-        subject: `Update Status Laporan ${report.report_number}`,
+    await createNotificationSafe(
+      {
+        userId: reporter.id,
+        reportId: report.id,
+        recipientEmail: reporter.email,
+        subject: `Update Status Laporan ${report.reportNumber}`,
         message:
           note ||
-          `Status laporan ${report.report_number} gagal dikirim melalui email.`,
+          `Status laporan ${report.reportNumber} gagal dikirim melalui email.`,
         status: "failed",
-        sent_at: null,
-        error_message: errorMessage,
-      });
-
-    if (notificationError) {
-      console.error(
-        "Failed to save failed notification:",
-        notificationError.message
-      );
-    }
+        sentAt: null,
+        errorMessage,
+      },
+      "Failed to save failed notification:"
+    );
   }
 }
 
@@ -170,119 +166,86 @@ export async function notifyDuplicateReportersStatusChange({
     return;
   }
 
-  const supabase = createAdminClient();
+  const masterReport = await prisma.report.findUnique({
+    where: { id: masterReportId },
+    select: {
+      id: true,
+      reportNumber: true,
+      title: true,
+      manualAddress: true,
+      autoAddress: true,
+      latitude: true,
+      longitude: true,
+    },
+  });
 
-  const { data: masterReport, error: masterReportError } = await supabase
-    .from("reports")
-    .select(
-      `
-      id,
-      report_number,
-      title,
-      manual_address,
-      auto_address,
-      latitude,
-      longitude
-      `
-    )
-    .eq("id", masterReportId)
-    .maybeSingle();
-
-  if (masterReportError || !masterReport) {
+  if (!masterReport) {
     console.error(
-      "Failed to fetch master report for duplicate notification:",
-      masterReportError?.message
+      "Failed to fetch master report for duplicate notification: not found"
     );
     return;
   }
 
-  const { data: relations, error } = await supabase
-    .from("report_relations")
-    .select("source_report_id")
-    .eq("target_report_id", masterReportId)
-    .eq("relation_type", "duplicate");
-
-  if (error) {
-    if (!isMissingReportRelationsError(error.message)) {
-      console.error(
-        "Failed to fetch duplicate report relations for status notification:",
-        error.message
-      );
-    }
-
-    return;
-  }
+  const relations = await prisma.reportRelation.findMany({
+    where: { targetReportId: masterReportId, relationType: "duplicate" },
+    select: { sourceReportId: true },
+  });
 
   const sourceReportIds = Array.from(
-    new Set((relations ?? []).map((relation) => relation.source_report_id))
+    new Set(relations.map((relation) => relation.sourceReportId))
   );
 
   if (sourceReportIds.length === 0) {
     return;
   }
 
-  const { data: sourceReports, error: sourceReportsError } = await supabase
-    .from("reports")
-    .select("id, report_number, title, reporter_id")
-    .in("id", sourceReportIds);
-
-  if (sourceReportsError) {
-    console.error(
-      "Failed to fetch duplicate source reports for status notification:",
-      sourceReportsError.message
-    );
-    return;
-  }
+  const sourceReports = await prisma.report.findMany({
+    where: { id: { in: sourceReportIds } },
+    select: { id: true, reportNumber: true, title: true, reporterId: true },
+  });
 
   const reporterIds = Array.from(
-    new Set(
-      (sourceReports ?? [])
-        .map((sourceReport) => sourceReport.reporter_id)
-        .filter((id): id is string => Boolean(id))
-    )
+    new Set(sourceReports.map((sourceReport) => sourceReport.reporterId))
   );
 
-  const { data: reporters, error: reportersError } =
+  const reporters =
     reporterIds.length > 0
-        ? await supabase
-            .from("profiles")
-          .select("id, full_name, email, notification_email_enabled")
-          .in("id", reporterIds)
-      : { data: [], error: null };
-
-  if (reportersError) {
-    console.error(
-      "Failed to fetch duplicate reporters for status notification:",
-      reportersError.message
-    );
-    return;
-  }
+      ? await prisma.profile.findMany({
+          where: { id: { in: reporterIds } },
+          select: {
+            id: true,
+            fullName: true,
+            email: true,
+            notificationEmailEnabled: true,
+          },
+        })
+      : [];
 
   const reporterById = new Map(
-    (reporters ?? []).map((reporter) => [reporter.id, reporter])
+    reporters.map((reporter) => [reporter.id, reporter])
   );
   const reportAddress =
-    masterReport.manual_address ||
-    masterReport.auto_address ||
+    masterReport.manualAddress ||
+    masterReport.autoAddress ||
     `Latitude ${masterReport.latitude}, Longitude ${masterReport.longitude}`;
 
-  for (const sourceReport of sourceReports ?? []) {
-    const reporter = reporterById.get(sourceReport.reporter_id);
+  for (const sourceReport of sourceReports) {
+    const reporter = reporterById.get(sourceReport.reporterId);
 
-    if (!reporter?.email || reporter.notification_email_enabled === false) {
+    if (!reporter?.email || reporter.notificationEmailEnabled === false) {
       continue;
     }
 
     const duplicateNote = [
-      `Laporan Anda (${sourceReport.report_number}) telah digabungkan dengan laporan utama ${masterReport.report_number}.`,
+      `Laporan Anda (${sourceReport.reportNumber}) telah digabungkan dengan laporan utama ${masterReport.reportNumber}.`,
       note || "Status laporan utama telah diperbarui.",
     ].join(" ");
 
     try {
       await sendReportStatusNotificationViaBrevo({
         reporterEmail: reporter.email,
-        reporterName: reporter.full_name,
-        reportNumber: masterReport.report_number,
+        reporterName: reporter.fullName,
+        reportNumber: masterReport.reportNumber,
         reportTitle: masterReport.title,
         oldStatus,
         newStatus,
@@ -290,25 +253,19 @@ export async function notifyDuplicateReportersStatusChange({
         reportAddress,
       });
 
-      const { error: notificationError } = await supabase
-        .from("notifications")
-        .insert({
-          user_id: reporter.id,
-          report_id: sourceReport.id,
-          recipient_email: reporter.email,
-          subject: `Update Status Laporan Utama ${masterReport.report_number}`,
+      await createNotificationSafe(
+        {
+          userId: reporter.id,
+          reportId: sourceReport.id,
+          recipientEmail: reporter.email,
+          subject: `Update Status Laporan Utama ${masterReport.reportNumber}`,
           message: duplicateNote,
           status: "sent",
-          sent_at: new Date().toISOString(),
-          error_message: null,
-        });
-
-      if (notificationError) {
-        console.error(
-          "Failed to save duplicate status notification:",
-          notificationError.message
-        );
-      }
+          sentAt: new Date(),
+          errorMessage: null,
+        },
+        "Failed to save duplicate status notification:"
+      );
     } catch (sendError) {
       const errorMessage =
         sendError instanceof Error
@@ -320,33 +277,19 @@ export async function notifyDuplicateReportersStatusChange({
         errorMessage
       );
 
-      const { error: notificationError } = await supabase
-        .from("notifications")
-        .insert({
-          user_id: reporter.id,
-          report_id: sourceReport.id,
-          recipient_email: reporter.email,
-          subject: `Update Status Laporan Utama ${masterReport.report_number}`,
+      await createNotificationSafe(
+        {
+          userId: reporter.id,
+          reportId: sourceReport.id,
+          recipientEmail: reporter.email,
+          subject: `Update Status Laporan Utama ${masterReport.reportNumber}`,
           message: duplicateNote,
           status: "failed",
-          sent_at: null,
-          error_message: errorMessage,
-        });
-
-      if (notificationError) {
-        console.error(
-          "Failed to save failed duplicate status notification:",
-          notificationError.message
-        );
-      }
+          sentAt: null,
+          errorMessage,
+        },
+        "Failed to save failed duplicate status notification:"
+      );
     }
   }
-}
-
-function isMissingReportRelationsError(message: string | null | undefined) {
-  return Boolean(
-    message?.includes("report_relations") &&
-      (message.includes("does not exist") ||
-        message.includes("Could not find the table"))
-  );
 }

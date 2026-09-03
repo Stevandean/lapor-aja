@@ -1,7 +1,11 @@
 import { getProfile } from "@/src/lib/auth/getProfile";
-import { createClient } from "@/src/lib/supabase/server";
+import { prisma } from "@/src/lib/prisma";
 
 const LIST_LIMIT = 50;
+
+function toDisplayUrl(filePath: string | null | undefined) {
+  return filePath && filePath.startsWith("/") ? filePath : null;
+}
 
 export async function getHamletHeadVerificationReports() {
   const profile = await getProfile();
@@ -27,39 +31,35 @@ export async function getHamletHeadVerificationReports() {
     };
   }
 
-  const supabase = await createClient();
-
-  const { data, error } = await supabase
-    .from("reports")
-    .select(
-      `
-      id,
-      report_number,
-      title,
-      description,
-      status,
-      priority,
-      created_at,
-      categories(name),
-      dusuns(name)
-    `
-    )
-    .eq("status", "need_verification")
-    .eq("dusun_id", profile.dusun_id)
-    .order("created_at", { ascending: false })
-    .limit(LIST_LIMIT)
-
-  if (error) {
-    console.error("Failed to fetch hamlet verification reports:", error.message);
-
-    return {
-      reports: [],
-      missingHamlet: false,
-    };
-  }
+  const reports = await prisma.report.findMany({
+    where: { status: "need_verification", dusunId: profile.dusun_id },
+    select: {
+      id: true,
+      reportNumber: true,
+      title: true,
+      description: true,
+      status: true,
+      priority: true,
+      createdAt: true,
+      category: { select: { name: true } },
+      dusun: { select: { name: true } },
+    },
+    orderBy: { createdAt: "desc" },
+    take: LIST_LIMIT,
+  });
 
   return {
-    reports: data ?? [],
+    reports: reports.map((report) => ({
+      id: report.id,
+      report_number: report.reportNumber,
+      title: report.title,
+      description: report.description,
+      status: report.status,
+      priority: report.priority,
+      created_at: report.createdAt.toISOString(),
+      categories: report.category,
+      dusuns: report.dusun,
+    })),
     missingHamlet: false,
   };
 }
@@ -71,97 +71,73 @@ export async function getHamletHeadVerificationReportDetail(reportId: string) {
     return null;
   }
 
-  const supabase = await createClient();
+  const report = await prisma.report.findFirst({
+    where: { id: reportId, dusunId: profile.dusun_id },
+    select: {
+      id: true,
+      reportNumber: true,
+      title: true,
+      description: true,
+      status: true,
+      priority: true,
+      latitude: true,
+      longitude: true,
+      autoAddress: true,
+      manualAddress: true,
+      adminNote: true,
+      createdAt: true,
+      updatedAt: true,
+      category: { select: { name: true } },
+      dusun: { select: { name: true } },
+      reporter: { select: { fullName: true, email: true, phoneNumber: true } },
+    },
+  });
 
-  const { data: report, error } = await supabase
-    .from("reports")
-    .select(
-      `
-      id,
-      report_number,
-      title,
-      description,
-      status,
-      priority,
-      latitude,
-      longitude,
-      auto_address,
-      manual_address,
-      admin_note,
-      created_at,
-      updated_at,
-      category:categories(name),
-      hamlet:dusuns(name),
-      reporter:profiles!reports_reporter_id_fkey(full_name, email, phone_number)
-    `
-    )
-    .eq("id", reportId)
-    .eq("dusun_id", profile.dusun_id)
-    .single();
-
-  if (error || !report) {
-    console.error("Failed to fetch verification report detail:", error?.message);
+  if (!report) {
     return null;
   }
 
-  const { data: photos, error: photosError } = await supabase
-    .from("report_photos")
-    .select("id, file_path, photo_url, created_at")
-    .eq("report_id", reportId)
-    .order("created_at", { ascending: true });
+  const photos = await prisma.reportPhoto.findMany({
+    where: { reportId },
+    select: { id: true, filePath: true, photoUrl: true, createdAt: true },
+    orderBy: { createdAt: "asc" },
+  });
 
-  if (photosError) {
-    console.error("Failed to fetch report photos:", photosError.message);
-  }
-
-  const photosWithSignedUrls = await Promise.all(
-    (photos ?? []).map(async (photo) => {
-      const { data } = await supabase.storage
-        .from("report-photos")
-        .createSignedUrl(photo.file_path, 60 * 60);
-
-      return {
-        ...photo,
-        signedUrl: data?.signedUrl ?? null,
-      };
-    })
-  );
+  const photosWithSignedUrls = photos.map((photo) => ({
+    id: photo.id,
+    file_path: photo.filePath,
+    photo_url: photo.photoUrl,
+    created_at: photo.createdAt.toISOString(),
+    signedUrl: toDisplayUrl(photo.filePath),
+  }));
 
   return {
-    report,
+    report: {
+      id: report.id,
+      report_number: report.reportNumber,
+      title: report.title,
+      description: report.description,
+      status: report.status,
+      priority: report.priority,
+      latitude: Number(report.latitude),
+      longitude: Number(report.longitude),
+      auto_address: report.autoAddress,
+      manual_address: report.manualAddress,
+      admin_note: report.adminNote,
+      created_at: report.createdAt.toISOString(),
+      updated_at: report.updatedAt.toISOString(),
+      category: report.category,
+      hamlet: report.dusun,
+      reporter: report.reporter
+        ? {
+            full_name: report.reporter.fullName,
+            email: report.reporter.email,
+            phone_number: report.reporter.phoneNumber,
+          }
+        : null,
+    },
     photos: photosWithSignedUrls,
   };
-}
-
-async function getHamletReportCount(
-  dusunId: string,
-  filter?: {
-    column: string;
-    value: string;
-  }
-) {
-  const supabase = await createClient();
-
-  let query = supabase
-    .from("reports")
-    .select("*", {
-      count: "exact",
-      head: true,
-    })
-    .eq("dusun_id", dusunId);
-
-  if (filter) {
-    query = query.eq(filter.column, filter.value);
-  }
-
-  const { count, error } = await query;
-
-  if (error) {
-    console.error("Failed to count hamlet reports:", error.message);
-    return 0;
-  }
-
-  return count ?? 0;
 }
 
 export async function getHamletHeadDashboardData() {
@@ -195,7 +171,7 @@ export async function getHamletHeadDashboardData() {
     };
   }
 
-  const supabase = await createClient();
+  const dusunId = profile.dusun_id;
 
   const [
     totalAssignedReports,
@@ -203,47 +179,29 @@ export async function getHamletHeadDashboardData() {
     verifiedValidReports,
     verifiedInvalidReports,
     resolvedReports,
+    recentReports,
   ] = await Promise.all([
-    getHamletReportCount(profile.dusun_id),
-    getHamletReportCount(profile.dusun_id, {
-      column: "status",
-      value: "need_verification",
-    }),
-    getHamletReportCount(profile.dusun_id, {
-      column: "status",
-      value: "verified_valid",
-    }),
-    getHamletReportCount(profile.dusun_id, {
-      column: "status",
-      value: "verified_invalid",
-    }),
-    getHamletReportCount(profile.dusun_id, {
-      column: "status",
-      value: "resolved",
+    prisma.report.count({ where: { dusunId } }),
+    prisma.report.count({ where: { dusunId, status: "need_verification" } }),
+    prisma.report.count({ where: { dusunId, status: "verified_valid" } }),
+    prisma.report.count({ where: { dusunId, status: "verified_invalid" } }),
+    prisma.report.count({ where: { dusunId, status: "resolved" } }),
+    prisma.report.findMany({
+      where: { dusunId },
+      select: {
+        id: true,
+        reportNumber: true,
+        title: true,
+        status: true,
+        priority: true,
+        createdAt: true,
+        updatedAt: true,
+        category: { select: { name: true } },
+      },
+      orderBy: { updatedAt: "desc" },
+      take: 5,
     }),
   ]);
-
-  const { data: recentReports, error } = await supabase
-    .from("reports")
-    .select(
-      `
-      id,
-      report_number,
-      title,
-      status,
-      priority,
-      created_at,
-      updated_at,
-      category:categories(name)
-    `
-    )
-    .eq("dusun_id", profile.dusun_id)
-    .order("updated_at", { ascending: false })
-    .limit(5);
-
-  if (error) {
-    console.error("Failed to fetch recent hamlet reports:", error.message);
-  }
 
   return {
     missingHamlet: false,
@@ -254,7 +212,16 @@ export async function getHamletHeadDashboardData() {
       verifiedInvalidReports,
       resolvedReports,
     },
-    recentReports: recentReports ?? [],
+    recentReports: recentReports.map((report) => ({
+      id: report.id,
+      report_number: report.reportNumber,
+      title: report.title,
+      status: report.status,
+      priority: report.priority,
+      created_at: report.createdAt.toISOString(),
+      updated_at: report.updatedAt.toISOString(),
+      category: report.category,
+    })),
   };
 }
 
@@ -275,26 +242,12 @@ export async function getHamletHeadVerificationHistory() {
     };
   }
 
-  const supabase = await createClient();
-
-  const { data: verifications, error: verificationError } = await supabase
-    .from("report_verifications")
-    .select("id, report_id, is_valid, verification_note, created_at")
-    .eq("verified_by", profile.id)
-    .order("created_at", { ascending: false })
-    .limit(LIST_LIMIT)
-
-  if (verificationError) {
-    console.error(
-      "Failed to fetch verification history:",
-      verificationError.message
-    );
-
-    return {
-      missingHamlet: false,
-      history: [],
-    };
-  }
+  const verifications = await prisma.reportVerification.findMany({
+    where: { verifiedBy: profile.id },
+    select: { id: true, reportId: true, isValid: true, verificationNote: true, createdAt: true },
+    orderBy: { createdAt: "desc" },
+    take: LIST_LIMIT,
+  });
 
   const latestVerificationByReportId = new Map<
     string,
@@ -307,19 +260,22 @@ export async function getHamletHeadVerificationHistory() {
     }
   >();
 
-  for (const verification of verifications ?? []) {
-    if (!verification.report_id) continue;
+  for (const verification of verifications) {
+    if (!verification.reportId) continue;
 
-    if (!latestVerificationByReportId.has(verification.report_id)) {
-      latestVerificationByReportId.set(verification.report_id, verification);
+    if (!latestVerificationByReportId.has(verification.reportId)) {
+      latestVerificationByReportId.set(verification.reportId, {
+        id: verification.id,
+        report_id: verification.reportId,
+        is_valid: verification.isValid,
+        verification_note: verification.verificationNote,
+        created_at: verification.createdAt.toISOString(),
+      });
     }
   }
 
   const uniqueVerifications = Array.from(latestVerificationByReportId.values());
-
-  const reportIds = uniqueVerifications
-    .map((verification) => verification.report_id)
-    .filter(Boolean);
+  const reportIds = uniqueVerifications.map((verification) => verification.report_id);
 
   if (reportIds.length === 0) {
     return {
@@ -328,34 +284,33 @@ export async function getHamletHeadVerificationHistory() {
     };
   }
 
-  const { data: reports, error: reportsError } = await supabase
-    .from("reports")
-    .select(
-      `
-      id,
-      report_number,
-      title,
-      status,
-      priority,
-      updated_at,
-      category:categories(name),
-      hamlet:dusuns(name)
-    `
-    )
-    .in("id", reportIds)
-    .eq("dusun_id", profile.dusun_id)
-    .limit(LIST_LIMIT)
+  const reports = await prisma.report.findMany({
+    where: { id: { in: reportIds }, dusunId: profile.dusun_id },
+    select: {
+      id: true,
+      reportNumber: true,
+      title: true,
+      status: true,
+      priority: true,
+      updatedAt: true,
+      category: { select: { name: true } },
+      dusun: { select: { name: true } },
+    },
+    take: LIST_LIMIT,
+  });
 
-  if (reportsError) {
-    console.error("Failed to fetch verified reports:", reportsError.message);
+  const reportRows = reports.map((report) => ({
+    id: report.id,
+    report_number: report.reportNumber,
+    title: report.title,
+    status: report.status,
+    priority: report.priority,
+    updated_at: report.updatedAt.toISOString(),
+    category: report.category,
+    hamlet: report.dusun,
+  }));
 
-    return {
-      missingHamlet: false,
-      history: [],
-    };
-  }
-
-  const reportMap = new Map((reports ?? []).map((report) => [report.id, report]));
+  const reportMap = new Map(reportRows.map((report) => [report.id, report]));
 
   const history = uniqueVerifications
     .map((verification) => {
@@ -369,18 +324,8 @@ export async function getHamletHeadVerificationHistory() {
       };
     })
     .filter(
-      (
-        item
-      ): item is {
-        verification: {
-          id: string;
-          report_id: string;
-          is_valid: boolean;
-          verification_note: string | null;
-          created_at: string;
-        };
-        report: NonNullable<typeof reports>[number];
-      } => item !== null
+      (item): item is { verification: (typeof uniqueVerifications)[number]; report: (typeof reportRows)[number] } =>
+        item !== null
     );
 
   return {
@@ -406,43 +351,51 @@ export async function getHamletHeadAssignedReports() {
     };
   }
 
-  const supabase = await createClient();
-
-  const { data, error } = await supabase
-    .from("reports")
-    .select(
-      `
-      id,
-      report_number,
-      title,
-      description,
-      status,
-      priority,
-      asset_status,
-      authority_level,
-      follow_up_type,
-      created_at,
-      updated_at,
-      category:categories(name),
-      hamlet:dusuns(name),
-      reporter:profiles!reports_reporter_id_fkey(full_name, email, phone_number)
-    `
-    )
-    .eq("dusun_id", profile.dusun_id)
-    .order("updated_at", { ascending: false })
-    .limit(LIST_LIMIT)
-
-  if (error) {
-    console.error("Failed to fetch assigned hamlet reports:", error.message);
-
-    return {
-      missingHamlet: false,
-      reports: [],
-    };
-  }
+  const reports = await prisma.report.findMany({
+    where: { dusunId: profile.dusun_id },
+    select: {
+      id: true,
+      reportNumber: true,
+      title: true,
+      description: true,
+      status: true,
+      priority: true,
+      assetStatus: true,
+      authorityLevel: true,
+      followUpType: true,
+      createdAt: true,
+      updatedAt: true,
+      category: { select: { name: true } },
+      dusun: { select: { name: true } },
+      reporter: { select: { fullName: true, email: true, phoneNumber: true } },
+    },
+    orderBy: { updatedAt: "desc" },
+    take: LIST_LIMIT,
+  });
 
   return {
     missingHamlet: false,
-    reports: data ?? [],
+    reports: reports.map((report) => ({
+      id: report.id,
+      report_number: report.reportNumber,
+      title: report.title,
+      description: report.description,
+      status: report.status,
+      priority: report.priority,
+      asset_status: report.assetStatus,
+      authority_level: report.authorityLevel,
+      follow_up_type: report.followUpType,
+      created_at: report.createdAt.toISOString(),
+      updated_at: report.updatedAt.toISOString(),
+      category: report.category,
+      hamlet: report.dusun,
+      reporter: report.reporter
+        ? {
+            full_name: report.reporter.fullName,
+            email: report.reporter.email,
+            phone_number: report.reporter.phoneNumber,
+          }
+        : null,
+    })),
   };
 }

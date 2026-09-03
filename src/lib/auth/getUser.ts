@@ -1,16 +1,14 @@
-import { createClient } from "@/src/lib/supabase/server";
+import { auth } from "@/src/lib/auth/auth";
 
 export async function getUser() {
-  const supabase = await createClient();
+  const session = await auth();
 
-  const {
-    data: { user },
-    error,
-  } = await supabase.auth.getUser();
-
-  if (error || !user) {
+  if (!session?.user?.id) {
     return null;
   }
 
-  return user;
+  return {
+    id: session.user.id,
+    email: session.user.email,
+  };
 }

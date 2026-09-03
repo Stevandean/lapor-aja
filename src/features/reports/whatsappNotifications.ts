@@ -1,6 +1,21 @@
-import { createAdminClient } from "@/src/lib/supabase/admin";
+import { prisma } from "@/src/lib/prisma";
+import type { Prisma } from "@prisma/client";
 import { sendWhatsvaMessage } from "@/src/lib/whatsapp/whatsva";
 import { buildReportStatusWhatsAppMessage } from "@/src/lib/whatsapp/templates";
+
+async function createNotificationSafe(
+  data: Prisma.NotificationUncheckedCreateInput,
+  errorLabel: string
+) {
+  try {
+    await prisma.notification.create({ data });
+  } catch (error) {
+    console.error(
+      errorLabel,
+      error instanceof Error ? error.message : error
+    );
+  }
+}
 
 type NotifyReporterWhatsAppStatusChangeParams = {
   reportId: string;
@@ -33,55 +48,44 @@ export async function notifyReporterWhatsAppStatusChange({
     return;
   }
 
-  const supabase = createAdminClient();
+  const report = await prisma.report.findUnique({
+    where: { id: reportId },
+    select: { id: true, reportNumber: true, title: true, reporterId: true },
+  });
 
-  const { data: report, error: reportError } = await supabase
-    .from("reports")
-    .select(
-      `
-      id,
-      report_number,
-      title,
-      reporter_id
-      `
-    )
-    .eq("id", reportId)
-    .single();
-
-  if (reportError || !report) {
-    console.error(
-      "Failed to fetch report for WhatsApp notification:",
-      reportError?.message
-    );
+  if (!report) {
+    console.error("Failed to fetch report for WhatsApp notification: not found");
     return;
   }
 
-  const { data: reporter, error: reporterError } = await supabase
-    .from("profiles")
-    .select("id, full_name, email, phone_number, notification_whatsapp_enabled")
-    .eq("id", report.reporter_id)
-    .single();
+  const reporter = await prisma.profile.findUnique({
+    where: { id: report.reporterId },
+    select: {
+      id: true,
+      fullName: true,
+      email: true,
+      phoneNumber: true,
+      notificationWhatsappEnabled: true,
+    },
+  });
 
-  if (reporterError || !reporter) {
-    console.error(
-      "Failed to fetch reporter for WhatsApp notification:",
-      reporterError?.message
-    );
+  if (!reporter) {
+    console.error("Failed to fetch reporter for WhatsApp notification: not found");
     return;
   }
 
-  if (reporter.notification_whatsapp_enabled === false) {
+  if (reporter.notificationWhatsappEnabled === false) {
     return;
   }
 
-  if (!reporter.phone_number) {
+  if (!reporter.phoneNumber) {
     console.error("Reporter phone number is missing.");
     return;
   }
 
   const message = buildReportStatusWhatsAppMessage({
-    reporterName: reporter.full_name,
-    reportNumber: report.report_number,
+    reporterName: reporter.fullName,
+    reportNumber: report.reportNumber,
     reportTitle: report.title,
     oldStatus,
     newStatus,
@@ -90,34 +94,28 @@ export async function notifyReporterWhatsAppStatusChange({
 
   try {
     const result = await sendWhatsvaMessage({
-      phoneNumber: reporter.phone_number,
+      phoneNumber: reporter.phoneNumber,
       message,
     });
 
-    const { error: notificationError } = await supabase
-      .from("notifications")
-      .insert({
-        user_id: reporter.id,
-        report_id: report.id,
-        recipient_email: reporter.email || null,
-        recipient_phone: reporter.phone_number,
-        subject: `WhatsApp Update Status Laporan ${report.report_number}`,
+    await createNotificationSafe(
+      {
+        userId: reporter.id,
+        reportId: report.id,
+        recipientEmail: reporter.email || null,
+        recipientPhone: reporter.phoneNumber,
+        subject: `WhatsApp Update Status Laporan ${report.reportNumber}`,
         message,
         status: "sent",
-        sent_at: new Date().toISOString(),
-        error_message: null,
+        sentAt: new Date(),
+        errorMessage: null,
         channel: "whatsapp",
         provider: "whatsva",
-        provider_message_id:
+        providerMessageId:
           result?.id || result?.message_id || result?.data?.id || null,
-      });
-
-    if (notificationError) {
-      console.error(
-        "Failed to save WhatsApp notification:",
-        notificationError.message
-      );
-    }
+      },
+      "Failed to save WhatsApp notification:"
+    );
   } catch (error) {
     const errorMessage =
       error instanceof Error
@@ -126,29 +124,23 @@ export async function notifyReporterWhatsAppStatusChange({
 
     console.error("Failed to send WhatsApp notification:", errorMessage);
 
-    const { error: notificationError } = await supabase
-      .from("notifications")
-      .insert({
-        user_id: reporter.id,
-        report_id: report.id,
-        recipient_email: reporter.email || null,
-        recipient_phone: reporter.phone_number,
-        subject: `WhatsApp Update Status Laporan ${report.report_number}`,
+    await createNotificationSafe(
+      {
+        userId: reporter.id,
+        reportId: report.id,
+        recipientEmail: reporter.email || null,
+        recipientPhone: reporter.phoneNumber,
+        subject: `WhatsApp Update Status Laporan ${report.reportNumber}`,
         message,
         status: "failed",
-        sent_at: null,
-        error_message: errorMessage,
+        sentAt: null,
+        errorMessage,
         channel: "whatsapp",
         provider: "whatsva",
-        provider_message_id: null,
-      });
-
-    if (notificationError) {
-      console.error(
-        "Failed to save failed WhatsApp notification:",
-        notificationError.message
-      );
-    }
+        providerMessageId: null,
+      },
+      "Failed to save failed WhatsApp notification:"
+    );
   }
 }
 
@@ -169,105 +161,75 @@ export async function notifyDuplicateReportersWhatsAppStatusChange({
     return;
   }
 
-  const supabase = createAdminClient();
+  const masterReport = await prisma.report.findUnique({
+    where: { id: masterReportId },
+    select: { id: true, reportNumber: true, title: true },
+  });
 
-  const { data: masterReport, error: masterReportError } = await supabase
-    .from("reports")
-    .select("id, report_number, title")
-    .eq("id", masterReportId)
-    .maybeSingle();
-
-  if (masterReportError || !masterReport) {
+  if (!masterReport) {
     console.error(
-      "Failed to fetch master report for duplicate WhatsApp notification:",
-      masterReportError?.message
+      "Failed to fetch master report for duplicate WhatsApp notification: not found"
     );
     return;
   }
 
-  const { data: relations, error } = await supabase
-    .from("report_relations")
-    .select("source_report_id")
-    .eq("target_report_id", masterReportId)
-    .eq("relation_type", "duplicate");
-
-  if (error) {
-    if (!isMissingReportRelationsError(error.message)) {
-      console.error(
-        "Failed to fetch duplicate report relations for WhatsApp notification:",
-        error.message
-      );
-    }
-
-    return;
-  }
+  const relations = await prisma.reportRelation.findMany({
+    where: { targetReportId: masterReportId, relationType: "duplicate" },
+    select: { sourceReportId: true },
+  });
 
   const sourceReportIds = Array.from(
-    new Set((relations ?? []).map((relation) => relation.source_report_id))
+    new Set(relations.map((relation) => relation.sourceReportId))
   );
 
   if (sourceReportIds.length === 0) {
     return;
   }
 
-  const { data: sourceReports, error: sourceReportsError } = await supabase
-    .from("reports")
-    .select("id, report_number, title, reporter_id")
-    .in("id", sourceReportIds);
-
-  if (sourceReportsError) {
-    console.error(
-      "Failed to fetch duplicate source reports for WhatsApp notification:",
-      sourceReportsError.message
-    );
-    return;
-  }
+  const sourceReports = await prisma.report.findMany({
+    where: { id: { in: sourceReportIds } },
+    select: { id: true, reportNumber: true, title: true, reporterId: true },
+  });
 
   const reporterIds = Array.from(
-    new Set(
-      (sourceReports ?? [])
-        .map((sourceReport) => sourceReport.reporter_id)
-        .filter((id): id is string => Boolean(id))
-    )
+    new Set(sourceReports.map((sourceReport) => sourceReport.reporterId))
   );
 
-  const { data: reporters, error: reportersError } =
+  const reporters =
     reporterIds.length > 0
-        ? await supabase
-          .from("profiles")
-          .select("id, full_name, email, phone_number, notification_whatsapp_enabled")
-          .in("id", reporterIds)
-      : { data: [], error: null };
-
-  if (reportersError) {
-    console.error(
-      "Failed to fetch duplicate reporters for WhatsApp notification:",
-      reportersError.message
-    );
-    return;
-  }
+      ? await prisma.profile.findMany({
+          where: { id: { in: reporterIds } },
+          select: {
+            id: true,
+            fullName: true,
+            email: true,
+            phoneNumber: true,
+            notificationWhatsappEnabled: true,
+          },
+        })
+      : [];
 
   const reporterById = new Map(
-    (reporters ?? []).map((reporter) => [reporter.id, reporter])
+    reporters.map((reporter) => [reporter.id, reporter])
   );
 
-  for (const sourceReport of sourceReports ?? []) {
-    const reporter = reporterById.get(sourceReport.reporter_id);
+  for (const sourceReport of sourceReports) {
+    const reporter = reporterById.get(sourceReport.reporterId);
 
     if (
-      !reporter?.phone_number ||
-      reporter.notification_whatsapp_enabled === false
+      !reporter?.phoneNumber ||
+      reporter.notificationWhatsappEnabled === false
     ) {
       continue;
     }
 
     const duplicateNote = [
-      `Laporan Anda (${sourceReport.report_number}) telah digabungkan dengan laporan utama ${masterReport.report_number}.`,
+      `Laporan Anda (${sourceReport.reportNumber}) telah digabungkan dengan laporan utama ${masterReport.reportNumber}.`,
       note || "Status laporan utama telah diperbarui.",
     ].join(" ");
     const message = buildReportStatusWhatsAppMessage({
-      reporterName: reporter.full_name,
-      reportNumber: masterReport.report_number,
+      reporterName: reporter.fullName,
+      reportNumber: masterReport.reportNumber,
       reportTitle: masterReport.title,
       oldStatus,
       newStatus,
@@ -276,34 +238,28 @@ export async function notifyDuplicateReportersWhatsAppStatusChange({
 
     try {
       const result = await sendWhatsvaMessage({
-        phoneNumber: reporter.phone_number,
+        phoneNumber: reporter.phoneNumber,
         message,
       });
 
-      const { error: notificationError } = await supabase
-        .from("notifications")
-        .insert({
-          user_id: reporter.id,
-          report_id: sourceReport.id,
-          recipient_email: reporter.email || null,
-          recipient_phone: reporter.phone_number,
-          subject: `WhatsApp Update Status Laporan Utama ${masterReport.report_number}`,
+      await createNotificationSafe(
+        {
+          userId: reporter.id,
+          reportId: sourceReport.id,
+          recipientEmail: reporter.email || null,
+          recipientPhone: reporter.phoneNumber,
+          subject: `WhatsApp Update Status Laporan Utama ${masterReport.reportNumber}`,
           message,
           status: "sent",
-          sent_at: new Date().toISOString(),
-          error_message: null,
+          sentAt: new Date(),
+          errorMessage: null,
           channel: "whatsapp",
           provider: "whatsva",
-          provider_message_id:
+          providerMessageId:
             result?.id || result?.message_id || result?.data?.id || null,
-        });
-
-      if (notificationError) {
-        console.error(
-          "Failed to save duplicate WhatsApp notification:",
-          notificationError.message
-        );
-      }
+        },
+        "Failed to save duplicate WhatsApp notification:"
+      );
     } catch (sendError) {
       const errorMessage =
         sendError instanceof Error
@@ -315,37 +271,23 @@ export async function notifyDuplicateReportersWhatsAppStatusChange({
         errorMessage
       );
 
-      const { error: notificationError } = await supabase
-        .from("notifications")
-        .insert({
-          user_id: reporter.id,
-          report_id: sourceReport.id,
-          recipient_email: reporter.email || null,
-          recipient_phone: reporter.phone_number,
-          subject: `WhatsApp Update Status Laporan Utama ${masterReport.report_number}`,
+      await createNotificationSafe(
+        {
+          userId: reporter.id,
+          reportId: sourceReport.id,
+          recipientEmail: reporter.email || null,
+          recipientPhone: reporter.phoneNumber,
+          subject: `WhatsApp Update Status Laporan Utama ${masterReport.reportNumber}`,
           message,
           status: "failed",
-          sent_at: null,
-          error_message: errorMessage,
+          sentAt: null,
+          errorMessage,
           channel: "whatsapp",
           provider: "whatsva",
-          provider_message_id: null,
-        });
-
-      if (notificationError) {
-        console.error(
-          "Failed to save failed duplicate WhatsApp notification:",
-          notificationError.message
-        );
-      }
+          providerMessageId: null,
+        },
+        "Failed to save failed duplicate WhatsApp notification:"
+      );
     }
   }
-}
-
-function isMissingReportRelationsError(message: string | null | undefined) {
-  return Boolean(
-    message?.includes("report_relations") &&
-      (message.includes("does not exist") ||
-        message.includes("Could not find the table"))
-  );
 }

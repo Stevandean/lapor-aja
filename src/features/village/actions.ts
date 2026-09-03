@@ -2,10 +2,11 @@
 
 import { revalidatePath } from "next/cache";
 import { redirect } from "next/navigation";
+import bcrypt from "bcrypt";
 import { createReportStatusLog } from "@/src/features/reports/statusLogs";
 import { getProfile } from "@/src/lib/auth/getProfile";
 import { getDashboardRouteByRole, ROUTES } from "@/src/lib/constants/routes";
-import { createClient } from "@/src/lib/supabase/server";
+import { prisma } from "@/src/lib/prisma";
 import type { ActionState } from "@/src/types/action";
 import { createAdminClient } from "@/src/lib/supabase/admin";
 import { recordSlaEvent } from "@/src/features/reports/slaEvents";
@@ -174,23 +175,21 @@ export async function updateVillageUser(
     };
   }
 
-  const supabase = await createClient();
-
-  const { error } = await supabase
-    .from("profiles")
-    .update({
-      full_name: fullName,
-      phone_number: phoneNumber || null,
-      role,
-      dusun_id: role === "kepala_dusun" ? dusunId : null,
-      section_id: role === "kasi" ? sectionId : null,
-    })
-    .eq("id", userId);
-
-  if (error) {
+  try {
+    await prisma.profile.update({
+      where: { id: userId },
+      data: {
+        fullName,
+        phoneNumber: phoneNumber || null,
+        role,
+        dusunId: role === "kepala_dusun" ? dusunId : null,
+        sectionId: role === "kasi" ? sectionId : null,
+      },
+    });
+  } catch (error) {
     return {
       status: "error",
-      message: error.message,
+      message: error instanceof Error ? error.message : "Gagal memperbarui profil pengguna.",
     };
   }
 
@@ -233,19 +232,17 @@ export async function toggleVillageUserStatus(
     };
   }
 
-  const supabase = await createClient();
-
-  const { error } = await supabase
-    .from("profiles")
-    .update({
-      is_active: action === "activate",
-    })
-    .eq("id", userId);
-
-  if (error) {
+  try {
+    await prisma.profile.update({
+      where: { id: userId },
+      data: {
+        isActive: action === "activate",
+      },
+    });
+  } catch (error) {
     return {
       status: "error",
-      message: error.message,
+      message: error instanceof Error ? error.message : "Gagal memperbarui status pengguna.",
     };
   }
 
@@ -324,48 +321,36 @@ export async function createVillageUser(
     };
   }
 
-  const adminSupabase = createAdminClient();
+  const existingProfile = await prisma.profile.findUnique({
+    where: { email },
+  });
 
-  const { data: createdUser, error: createError } =
-    await adminSupabase.auth.admin.createUser({
-      email,
-      password,
-      email_confirm: true,
-      user_metadata: {
-        full_name: fullName,
-        phone_number: phoneNumber,
-      },
-    });
-
-  if (createError || !createdUser.user) {
+  if (existingProfile) {
     return {
       status: "error",
-      message: createError?.message || "Gagal membuat pengguna.",
+      message: "Email ini sudah terdaftar. Silakan gunakan email lain.",
     };
   }
 
-  const userId = createdUser.user.id;
+  const passwordHash = await bcrypt.hash(password, 10);
 
-  const { error: profileError } = await adminSupabase.from("profiles").upsert(
-    {
-      id: userId,
-      email,
-      full_name: fullName,
-      phone_number: phoneNumber || null,
-      role,
-      dusun_id: role === "kepala_dusun" ? dusunId : null,
-      is_active: true,
-      section_id: role === "kasi" ? sectionId : null,
-    },
-    {
-      onConflict: "id",
-    }
-  );
-
-  if (profileError) {
+  try {
+    await prisma.profile.create({
+      data: {
+        fullName,
+        email,
+        phoneNumber: phoneNumber || null,
+        passwordHash,
+        role,
+        dusunId: role === "kepala_dusun" ? dusunId : null,
+        sectionId: role === "kasi" ? sectionId : null,
+        isActive: true,
+      },
+    });
+  } catch (error) {
     return {
       status: "error",
-      message: profileError.message,
+      message: error instanceof Error ? error.message : "Gagal membuat pengguna.",
     };
   }
 

@@ -1,67 +1,57 @@
 "use client";
 
-import { useState } from "react";
+import { useActionState, useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import { Eye, EyeOff, Lock, Mail, Phone, User } from "lucide-react";
 import { toast } from "sonner";
-import { createClient } from "@/src/lib/supabase/client";
 import { ROUTES } from "@/src/lib/constants/routes";
 import { Button } from "@/src/components/ui/Button";
 import { Input } from "@/src/components/ui/Input";
+import { registerUser } from "@/src/features/auth/actions";
+import type { ActionState } from "@/src/types/action";
+
+const initialState: ActionState = {
+  status: "idle",
+  message: "",
+};
 
 export default function RegisterForm() {
   const router = useRouter();
-  const supabase = createClient();
 
-  const [fullName, setFullName] = useState("");
-  const [email, setEmail] = useState("");
-  const [phoneNumber, setPhoneNumber] = useState("");
-  const [password, setPassword] = useState("");
+  const [state, action, isPending] = useActionState(
+    registerUser,
+    initialState
+  );
 
   const [showPassword, setShowPassword] = useState(false);
-  const [loading, setLoading] = useState(false);
 
-  async function handleRegister(event: React.FormEvent<HTMLFormElement>) {
-    event.preventDefault();
+  useEffect(() => {
+    if (!state.message) return;
 
-    setLoading(true);
-
-    const { error } = await supabase.auth.signUp({
-      email,
-      password,
-      options: {
-        data: {
-          full_name: fullName,
-          phone_number: phoneNumber,
-        },
-      },
-    });
-
-    if (error) {
-      setLoading(false);
-      toast.error("Registrasi gagal", {
-        description: translateAuthError(error.message),
+    if (state.status === "success") {
+      toast.success("Registrasi berhasil", {
+        description: "Silakan masuk menggunakan akun baru Anda.",
       });
-      return;
+
+      router.replace(`${ROUTES.LOGIN}?registered=1`);
+      router.refresh();
     }
 
-    toast.success("Registrasi berhasil", {
-      description: "Silakan masuk menggunakan akun baru Anda.",
-    });
-
-    router.replace(`${ROUTES.LOGIN}?registered=1`);
-    router.refresh();
-  }
+    if (state.status === "error") {
+      toast.error("Registrasi gagal", {
+        description: state.message,
+      });
+    }
+  }, [state, router]);
 
   return (
-    <form onSubmit={handleRegister} className="space-y-5">
+    <form action={action} className="space-y-5">
       <div className="relative">
         <Input
           label="Nama lengkap"
           type="text"
+          name="full_name"
           placeholder="Masukkan nama lengkap"
-          value={fullName}
-          onChange={(event) => setFullName(event.target.value)}
           required
           className="pl-10"
         />
@@ -72,9 +62,8 @@ export default function RegisterForm() {
         <Input
           label="Alamat email"
           type="email"
+          name="email"
           placeholder="nama@email.com"
-          value={email}
-          onChange={(event) => setEmail(event.target.value)}
           required
           className="pl-10"
         />
@@ -85,9 +74,8 @@ export default function RegisterForm() {
         <Input
           label="Nomor HP"
           type="text"
+          name="phone_number"
           placeholder="Contoh: 08123456789"
-          value={phoneNumber}
-          onChange={(event) => setPhoneNumber(event.target.value)}
           className="pl-10"
         />
         <Phone className="absolute left-3 top-[38px] h-4 w-4 text-muted-foreground" />
@@ -97,9 +85,8 @@ export default function RegisterForm() {
         <Input
           label="Kata sandi"
           type={showPassword ? "text" : "password"}
+          name="password"
           placeholder="Minimal 6 karakter"
-          value={password}
-          onChange={(event) => setPassword(event.target.value)}
           minLength={6}
           required
           className="pl-10 pr-10"
@@ -123,23 +110,9 @@ export default function RegisterForm() {
         </button>
       </div>
 
-      <Button type="submit" className="w-full" isLoading={loading}>
+      <Button type="submit" className="w-full" isLoading={isPending}>
         Buat akun
       </Button>
     </form>
   );
-}
-
-function translateAuthError(message: string) {
-  const lowerMessage = message.toLowerCase();
-
-  if (lowerMessage.includes("email rate limit exceeded")) {
-    return "Terlalu banyak percobaan registrasi. Silakan coba lagi nanti.";
-  }
-
-  if (lowerMessage.includes("user already registered")) {
-    return "Email ini sudah terdaftar. Silakan masuk menggunakan akun tersebut.";
-  }
-
-  return message;
 }

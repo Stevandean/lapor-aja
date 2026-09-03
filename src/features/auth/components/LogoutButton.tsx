@@ -2,8 +2,8 @@
 
 import { LogOut } from "lucide-react";
 import { useRouter } from "next/navigation";
+import { signOut } from "next-auth/react";
 import { toast } from "sonner";
-import { createClient } from "@/src/lib/supabase/client";
 import { Button } from "@/src/components/ui/Button";
 import { ROUTES } from "@/src/lib/constants/routes";
 import { cn } from "@/src/lib/utils";
@@ -20,14 +20,13 @@ export function LogoutButton({
   label = "Keluar",
 }: LogoutButtonProps) {
   const router = useRouter();
-  const supabase = createClient();
 
   async function handleLogout() {
-    const { error } = await supabase.auth.signOut();
+    const result = await signOut({ redirect: false });
 
-    if (error) {
+    if (!result) {
       toast.error("Gagal keluar", {
-        description: error.message,
+        description: "Terjadi kesalahan saat keluar dari akun.",
       });
       return;
     }

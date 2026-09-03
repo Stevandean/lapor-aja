@@ -1,7 +1,8 @@
 import { revalidatePath } from "next/cache";
 import { calculateEffectiveSlaStatus } from "@/src/lib/sla";
 import { sendBrevoEmail } from "@/src/lib/email/brevo";
-import { createAdminClient } from "@/src/lib/supabase/admin";
+import { prisma } from "@/src/lib/prisma";
+import type { Prisma, UserRole } from "@prisma/client";
 import { sendWhatsvaMessage } from "@/src/lib/whatsapp/whatsva";
 
 type SlaAlertType = "at_risk" | "overdue";
@@ -50,66 +51,86 @@ type NotificationPayload = {
   errorMessage?: string | null;
 };
 
-const ALERT_RECIPIENT_ROLES = ["admin", "kepala_desa", "sekdes"];
+const ALERT_RECIPIENT_ROLES: UserRole[] = ["admin", "kepala_desa", "sekdes"];
 
 export async function sendSlaAlertNotifications({
   triggeredBy = null,
 }: SendSlaAlertNotificationsParams = {}) {
-  const supabase = createAdminClient();
+  let reportRows;
+  let recipientRows;
 
-  const [{ data: reportRows, error: reportsError }, { data: recipients, error: recipientsError }] =
-    await Promise.all([
-      supabase
-        .from("reports")
-        .select(
-          `
-          id,
-          report_number,
-          title,
-          status,
-          priority,
-          created_at,
-          resolution_due_at,
-          resolved_at,
-          manual_address,
-          auto_address,
-          latitude,
-          longitude
-          `
-        )
-        .not("resolution_due_at", "is", null)
-        .order("updated_at", { ascending: false })
-        .limit(200),
-      supabase
-        .from("profiles")
-        .select(
-          "id, full_name, email, phone_number, role, notification_internal_enabled, notification_email_enabled, notification_whatsapp_enabled"
-        )
-        .in("role", ALERT_RECIPIENT_ROLES)
-        .eq("is_active", true),
+  try {
+    [reportRows, recipientRows] = await Promise.all([
+      prisma.report.findMany({
+        where: { resolutionDueAt: { not: null } },
+        select: {
+          id: true,
+          reportNumber: true,
+          title: true,
+          status: true,
+          priority: true,
+          createdAt: true,
+          resolutionDueAt: true,
+          resolvedAt: true,
+          manualAddress: true,
+          autoAddress: true,
+          latitude: true,
+          longitude: true,
+        },
+        orderBy: { updatedAt: "desc" },
+        take: 200,
+      }),
+      prisma.profile.findMany({
+        where: { role: { in: ALERT_RECIPIENT_ROLES }, isActive: true },
+        select: {
+          id: true,
+          fullName: true,
+          email: true,
+          phoneNumber: true,
+          role: true,
+          notificationInternalEnabled: true,
+          notificationEmailEnabled: true,
+          notificationWhatsappEnabled: true,
+        },
+      }),
     ]);
-
-  if (reportsError) {
+  } catch (error) {
     return {
       status: "error" as const,
-      message: reportsError.message,
+      message: error instanceof Error ? error.message : "Gagal memuat data alert SLA.",
       processed: 0,
       skipped: 0,
       failed: 0,
     };
   }
 
-  if (recipientsError) {
-    return {
-      status: "error" as const,
-      message: recipientsError.message,
-      processed: 0,
-      skipped: 0,
-      failed: 0,
-    };
-  }
+  const reportRowsMapped: SlaAlertReport[] = reportRows.map((report) => ({
+    id: report.id,
+    report_number: report.reportNumber,
+    title: report.title,
+    status: report.status,
+    priority: report.priority,
+    created_at: report.createdAt.toISOString(),
+    resolution_due_at: report.resolutionDueAt?.toISOString() ?? null,
+    resolved_at: report.resolvedAt?.toISOString() ?? null,
+    manual_address: report.manualAddress,
+    auto_address: report.autoAddress,
+    latitude: report.latitude ? Number(report.latitude) : null,
+    longitude: report.longitude ? Number(report.longitude) : null,
+  }));
 
-  const alertReports = ((reportRows ?? []) as SlaAlertReport[])
+  const recipients: StaffRecipient[] = recipientRows.map((recipient) => ({
+    id: recipient.id,
+    full_name: recipient.fullName,
+    email: recipient.email,
+    phone_number: recipient.phoneNumber,
+    role: recipient.role,
+    notification_internal_enabled: recipient.notificationInternalEnabled,
+    notification_email_enabled: recipient.notificationEmailEnabled,
+    notification_whatsapp_enabled: recipient.notificationWhatsappEnabled,
+  }));
+
+  const alertReports = reportRowsMapped
     .map((report) => ({
       report,
       alertType: calculateEffectiveSlaStatus(report),
@@ -129,7 +150,7 @@ export async function sendSlaAlertNotifications({
     };
   }
 
-  if (!recipients || recipients.length === 0) {
+  if (recipients.length === 0) {
     return {
       status: "success" as const,
       message:
@@ -151,17 +172,6 @@ export async function sendSlaAlertNotifications({
       triggeredBy,
     });
 
-    if (lockResult === "missing_schema") {
-      return {
-        status: "error" as const,
-        message:
-          "Skema notifikasi alert SLA belum tersedia. Jalankan migration supabase/migrations/202606250005_sla_alert_notifications.sql.",
-        processed,
-        skipped,
-        failed,
-      };
-    }
-
     if (lockResult === "duplicate") {
       skipped += 1;
       continue;
@@ -175,7 +185,7 @@ export async function sendSlaAlertNotifications({
     const alertMessage = buildSlaAlertMessage(report, alertType);
     const alertSubject = buildSlaAlertSubject(report, alertType);
 
-    for (const recipient of recipients as StaffRecipient[]) {
+    for (const recipient of recipients) {
       if (recipient.notification_internal_enabled !== false) {
         await createNotificationRecord({
           userId: recipient.id,
@@ -239,32 +249,29 @@ async function createSlaAlertLock({
   alertType: SlaAlertType;
   triggeredBy: string | null;
 }) {
-  const supabase = createAdminClient();
-  const { error } = await supabase
-    .from("report_sla_alert_notifications")
-    .insert({
-      report_id: reportId,
-      alert_type: alertType,
-      triggered_by: triggeredBy,
+  try {
+    await prisma.reportSlaAlertNotification.create({
+      data: {
+        reportId,
+        alertType,
+        triggeredBy,
+      },
     });
 
-  if (!error) {
     return "created" as const;
-  }
+  } catch (error) {
+    const prismaError = error as Prisma.PrismaClientKnownRequestError;
 
-  if (isMissingSlaAlertSchemaError(error.message)) {
-    return "missing_schema" as const;
-  }
+    if (prismaError?.code === "P2002") {
+      return "duplicate" as const;
+    }
 
-  if (
-    error.message.includes("duplicate key") ||
-    error.message.includes("unique")
-  ) {
-    return "duplicate" as const;
+    console.error(
+      "Failed to create SLA alert lock:",
+      error instanceof Error ? error.message : error
+    );
+    return "error" as const;
   }
-
-  console.error("Failed to create SLA alert lock:", error.message);
-  return "error" as const;
 }
 
 async function sendSlaEmailNotification({
@@ -394,43 +401,27 @@ async function createNotificationRecord({
   providerMessageId = null,
   errorMessage = null,
 }: NotificationPayload) {
-  const supabase = createAdminClient();
-  const sentAt = status === "sent" ? new Date().toISOString() : null;
-  const basePayload = {
-    user_id: userId,
-    report_id: reportId,
-    recipient_email: recipientEmail || "",
-    subject,
-    message,
-    status,
-    sent_at: sentAt,
-    error_message: errorMessage,
-  };
-  const { error } = await supabase.from("notifications").insert({
-    ...basePayload,
-    recipient_phone: recipientPhone || null,
-    channel,
-    provider,
-    provider_message_id: providerMessageId,
-  });
-
-  if (!error) {
-    return;
-  }
-
-  if (!isMissingNotificationChannelError(error.message)) {
-    console.error("Failed to create SLA notification record:", error.message);
-    return;
-  }
-
-  const { error: fallbackError } = await supabase
-    .from("notifications")
-    .insert(basePayload);
-
-  if (fallbackError) {
+  try {
+    await prisma.notification.create({
+      data: {
+        userId,
+        reportId,
+        recipientEmail: recipientEmail || "",
+        recipientPhone: recipientPhone || null,
+        subject,
+        message,
+        status,
+        sentAt: status === "sent" ? new Date() : null,
+        errorMessage,
+        channel,
+        provider,
+        providerMessageId,
+      },
+    });
+  } catch (error) {
     console.error(
-      "Failed to create fallback SLA notification record:",
-      fallbackError.message
+      "Failed to create SLA notification record:",
+      error instanceof Error ? error.message : error
     );
   }
 }
@@ -561,20 +552,4 @@ function escapeHtml(value: string) {
     .replaceAll(">", "&gt;")
     .replaceAll('"', "&quot;")
     .replaceAll("'", "&#039;");
-}
-
-function isMissingNotificationChannelError(message: string | null | undefined) {
-  return Boolean(
-    message?.includes("notifications") &&
-      (message.includes("schema cache") || message.includes("column"))
-  );
-}
-
-function isMissingSlaAlertSchemaError(message: string | null | undefined) {
-  return Boolean(
-    message?.includes("report_sla_alert_notifications") &&
-      (message.includes("does not exist") ||
-        message.includes("Could not find the table") ||
-        message.includes("schema cache"))
-  );
 }

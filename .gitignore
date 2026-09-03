@@ -33,6 +33,11 @@ yarn-error.log*
 # env files (can opt-in for committing if needed)
 .env*
 
+# local file uploads (report/verification photos, avatars, dst — lihat
+# CLAUDE.md poin 7 "Keputusan Arsitektur": foto pindah ke penyimpanan lokal)
+/public/uploads/*
+!/public/uploads/.gitkeep
+
 # vercel
 .vercel
 

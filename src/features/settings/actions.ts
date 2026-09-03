@@ -2,9 +2,11 @@
 
 import { revalidatePath } from "next/cache";
 import { redirect } from "next/navigation";
+import bcrypt from "bcrypt";
 import { getProfile } from "@/src/lib/auth/getProfile";
 import { ROUTES } from "@/src/lib/constants/routes";
 import { createClient } from "@/src/lib/supabase/server";
+import { prisma } from "@/src/lib/prisma";
 import type { ActionState } from "@/src/types/action";
 
 const MAX_AVATAR_SIZE = 2 * 1024 * 1024;
@@ -79,22 +81,14 @@ export async function updateOwnProfile(
     }
   }
 
-  const { error } = await supabase
-    .from("profiles")
-    .update({
-      full_name: fullName,
-      phone_number: phoneNumber || null,
-      ...(avatarPath ? { avatar_url: avatarPath } : {}),
-      updated_at: new Date().toISOString(),
-    })
-    .eq("id", profile.id);
-
-  if (error) {
-    return {
-      status: "error",
-      message: error.message,
-    };
-  }
+  await prisma.profile.update({
+    where: { id: profile.id },
+    data: {
+      fullName,
+      phoneNumber: phoneNumber || null,
+      ...(avatarPath ? { avatarUrl: avatarPath } : {}),
+    },
+  });
 
   revalidatePath("/dashboard");
   revalidatePath("/dashboard/settings");
@@ -111,7 +105,7 @@ export async function updateOwnPassword(
 ): Promise<ActionState> {
   void _prevState;
 
-  await requireProfile();
+  const profile = await requireProfile();
 
   const password = String(formData.get("password") || "");
   const confirmPassword = String(formData.get("confirm_password") || "");
@@ -130,17 +124,12 @@ export async function updateOwnPassword(
     };
   }
 
-  const supabase = await createClient();
-  const { error } = await supabase.auth.updateUser({
-    password,
-  });
+  const passwordHash = await bcrypt.hash(password, 10);
 
-  if (error) {
-    return {
-      status: "error",
-      message: error.message,
-    };
-  }
+  await prisma.profile.update({
+    where: { id: profile.id },
+    data: { passwordHash },
+  });
 
   return {
     status: "success",
@@ -159,25 +148,14 @@ export async function updateNotificationPreferences(
   const emailEnabled = formData.get("notification_email_enabled") === "on";
   const whatsappEnabled = formData.get("notification_whatsapp_enabled") === "on";
 
-  const supabase = await createClient();
-  const { error } = await supabase
-    .from("profiles")
-    .update({
-      notification_internal_enabled: internalEnabled,
-      notification_email_enabled: emailEnabled,
-      notification_whatsapp_enabled: whatsappEnabled,
-      updated_at: new Date().toISOString(),
-    })
-    .eq("id", profile.id);
-
-  if (error) {
-    return {
-      status: "error",
-      message: isMissingNotificationSettingsColumn(error)
-        ? "Preferensi notifikasi belum tersedia. Jalankan migration pengaturan terlebih dahulu."
-        : error.message,
-    };
-  }
+  await prisma.profile.update({
+    where: { id: profile.id },
+    data: {
+      notificationInternalEnabled: internalEnabled,
+      notificationEmailEnabled: emailEnabled,
+      notificationWhatsappEnabled: whatsappEnabled,
+    },
+  });
 
   revalidatePath("/dashboard");
   revalidatePath("/dashboard/settings");
@@ -186,14 +164,4 @@ export async function updateNotificationPreferences(
     status: "success",
     message: "Preferensi notifikasi berhasil diperbarui.",
   };
-}
-
-function isMissingNotificationSettingsColumn(error: { message?: string } | null) {
-  if (!error?.message) return false;
-
-  return (
-    error.message.includes("notification_internal_enabled") ||
-    error.message.includes("notification_email_enabled") ||
-    error.message.includes("notification_whatsapp_enabled")
-  );
 }

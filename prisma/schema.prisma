@@ -1,0 +1,803 @@
+// =====================================================================
+// LAPOR AJA — schema.prisma (MySQL)
+// Migrasi dari Supabase (PostgreSQL) + penambahan skema untuk 5 cabang
+// pengembangan Tugas Akhir: Sistem Peringatan Dini dan Evaluasi Kinerja
+// Pengaduan Berbasis SLA
+// =====================================================================
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "mysql"
+  url      = env("DATABASE_URL")
+}
+
+// =====================================================================
+// ENUM
+// =====================================================================
+
+enum UserRole {
+  public // pelapor / masyarakat umum
+  admin
+  kepala_desa
+  sekdes
+  kepala_dusun
+  kasi
+}
+
+enum ReportStatus {
+  pending
+  approved
+  rejected
+  need_verification
+  verified_valid
+  verified_invalid
+  classified
+  handled_by_village
+  forwarded_to_agency
+  waiting_budget
+  in_progress
+  resolved
+  archived
+  merged
+}
+
+enum ReportPriority {
+  rendah
+  sedang
+  tinggi
+  darurat
+}
+
+enum AssetStatus {
+  aset_desa
+  bukan_aset_desa
+  belum_diketahui
+}
+
+enum AuthorityLevel {
+  desa
+  kabupaten_kota
+  provinsi
+  nasional
+  belum_diketahui
+}
+
+enum FollowUpType {
+  ditangani_desa
+  diteruskan_ke_dinas
+  diusulkan_musrenbang
+  menunggu_anggaran
+  belum_ditentukan
+}
+
+// DIUBAH: menambah 'critical' agar sesuai 4 level yang dipresentasikan
+// (Aman -> on_time, Peringatan -> at_risk, Kritis -> critical, Terlambat -> overdue)
+enum SlaStatus {
+  on_time
+  at_risk
+  critical
+  overdue
+  completed
+}
+
+enum LetterStatus {
+  draft
+  final
+  sent
+}
+
+enum LetterType {
+  surat_tugas_verifikasi
+  surat_permohonan_perbaikan
+}
+
+enum NotificationStatus {
+  pending
+  sent
+  failed
+}
+
+enum ReportRelationType {
+  duplicate
+  recurrence
+  related
+}
+
+enum ReportRelationAction {
+  created
+  removed
+}
+
+enum AssignmentStatus {
+  assigned
+  accepted
+  returned
+  in_progress
+  waiting_budget
+  escalation_requested
+  completion_submitted
+  completed
+  cancelled
+}
+
+enum ProgressStatus {
+  plan
+  progress
+  budget_request
+  escalation_request
+  completion_submission
+  review_note
+}
+
+enum BudgetRequestStatus {
+  submitted
+  approved
+  rejected
+}
+
+enum SlaEventType {
+  deadline_started
+  paused_budget
+  resumed_budget
+  completed
+  merged
+}
+
+// DIUBAH: menambah 'critical' agar selaras dengan SlaStatus
+enum SlaAlertType {
+  at_risk
+  critical
+  overdue
+}
+
+// BARU — Cabang 2: level eskalasi menentukan siapa saja yang diberi notifikasi
+enum EscalationLevel {
+  level_1 // Kasi penanggung jawab
+  level_2 // + Admin
+  level_3 // + Kepala Desa
+}
+
+// BARU — Cabang 3: lingkup penilaian predikat kinerja
+enum PerformanceScope {
+  kasi
+  dusun
+  kategori
+}
+
+// BARU — Cabang 5
+enum SwadayaCampaignStatus {
+  open
+  closed
+  cancelled
+}
+
+enum ContributionType {
+  uang
+  material
+  logistik
+  tenaga
+}
+
+enum ContributionStatus {
+  pending
+  verified
+  received
+  rejected
+}
+
+// =====================================================================
+// MASTER DATA (tidak berubah dari skema lama)
+// =====================================================================
+
+model Dusun {
+  id          String   @id @default(uuid()) @db.Char(36)
+  name        String   @unique @db.VarChar(150)
+  description String?  @db.Text
+  isActive    Boolean  @default(true) @map("is_active")
+  createdAt   DateTime @default(now()) @map("created_at")
+  updatedAt   DateTime @updatedAt @map("updated_at")
+
+  profiles              Profile[]
+  reports               Report[]
+  performanceSnapshots  PerformanceSnapshot[]
+
+  @@map("dusuns")
+}
+
+model VillageSection {
+  id          String   @id @default(uuid()) @db.Char(36)
+  name        String   @unique @db.VarChar(150)
+  code        String?  @unique @db.VarChar(30)
+  description String?  @db.Text
+  isActive    Boolean  @default(true) @map("is_active")
+  sortOrder   Int      @default(0) @map("sort_order")
+  createdAt   DateTime @default(now()) @map("created_at")
+  updatedAt   DateTime @updatedAt @map("updated_at")
+
+  profiles        Profile[]
+  assignedReports Report[]                 @relation("ReportAssignedSection")
+  assignments     ReportSectionAssignment[]
+  budgetRequests  ReportBudgetRequest[]
+
+  @@map("village_sections")
+}
+
+model Category {
+  id              String          @id @default(uuid()) @db.Char(36)
+  name            String          @unique @db.VarChar(150)
+  description     String?         @db.Text
+  defaultPriority ReportPriority  @default(sedang) @map("default_priority")
+  isActive        Boolean         @default(true) @map("is_active")
+  createdAt       DateTime        @default(now()) @map("created_at")
+  updatedAt       DateTime        @updatedAt @map("updated_at")
+
+  reports              Report[]
+  performanceSnapshots PerformanceSnapshot[]
+  slaThresholds        SlaCategoryThreshold[]
+
+  @@map("categories")
+}
+
+model Agency {
+  id            String   @id @default(uuid()) @db.Char(36)
+  name          String   @unique @db.VarChar(200)
+  type          String?  @db.VarChar(100)
+  address       String?  @db.Text
+  email         String?  @db.VarChar(150)
+  phoneNumber   String?  @map("phone_number") @db.VarChar(30)
+  description   String?  @db.Text
+  contactPerson String?  @map("contact_person") @db.VarChar(150)
+  phone         String?  @db.VarChar(30)
+  isActive      Boolean  @default(true) @map("is_active")
+  createdAt     DateTime @default(now()) @map("created_at")
+  updatedAt     DateTime @updatedAt @map("updated_at")
+
+  assignedReports Report[]         @relation("ReportAssignedAgency")
+  reports         Report[]         @relation("ReportAgency")
+  officialLetters OfficialLetter[]
+
+  @@map("agencies")
+}
+
+model SlaRule {
+  id                String         @id @default(uuid()) @db.Char(36)
+  priority          ReportPriority @unique
+  verificationHours Int            @map("verification_hours")
+  resolutionHours   Int            @map("resolution_hours")
+  description       String?        @db.Text
+  isActive          Boolean        @default(true) @map("is_active")
+  createdAt         DateTime       @default(now()) @map("created_at")
+  updatedAt         DateTime       @updatedAt @map("updated_at")
+
+  @@map("sla_rules")
+}
+
+// BARU — Cabang 1 (fitur 1b): ambang batas SLA per kategori, opsional
+// override dari SlaRule berbasis priority. Kalau tidak ada baris untuk
+// suatu kategori, sistem fallback ke SlaRule berbasis priority laporan.
+model SlaCategoryThreshold {
+  id                String   @id @default(uuid()) @db.Char(36)
+  categoryId        String   @map("category_id") @db.Char(36)
+  verificationHours Int      @map("verification_hours")
+  resolutionHours   Int      @map("resolution_hours")
+  useBusinessDays   Boolean  @default(true) @map("use_business_days") // fitur 1c
+  createdAt         DateTime @default(now()) @map("created_at")
+  updatedAt         DateTime @updatedAt @map("updated_at")
+
+  category Category @relation(fields: [categoryId], references: [id])
+
+  @@unique([categoryId])
+  @@map("sla_category_thresholds")
+}
+
+// =====================================================================
+// USER
+// =====================================================================
+
+model Profile {
+  id                           String   @id @default(uuid()) @db.Char(36)
+  fullName                     String   @map("full_name") @db.VarChar(150)
+  email                        String   @unique @db.VarChar(150)
+  passwordHash                 String   @map("password_hash") @db.VarChar(255) // BARU: pengganti Supabase Auth
+  phoneNumber                  String?  @map("phone_number") @db.VarChar(30)
+  role                         UserRole @default(public)
+  dusunId                      String?  @map("dusun_id") @db.Char(36)
+  sectionId                    String?  @map("section_id") @db.Char(36)
+  avatarUrl                    String?  @map("avatar_url") @db.VarChar(255)
+  isActive                     Boolean  @default(true) @map("is_active")
+  notificationInternalEnabled  Boolean  @default(true) @map("notification_internal_enabled")
+  notificationEmailEnabled     Boolean  @default(true) @map("notification_email_enabled")
+  notificationWhatsappEnabled  Boolean  @default(true) @map("notification_whatsapp_enabled")
+  createdAt                    DateTime @default(now()) @map("created_at")
+  updatedAt                    DateTime @updatedAt @map("updated_at")
+
+  dusun   Dusun?          @relation(fields: [dusunId], references: [id])
+  section VillageSection? @relation(fields: [sectionId], references: [id])
+
+  reportsReported        Report[]                     @relation("ReportReporter")
+  reportsArchived        Report[]                     @relation("ReportArchivedBy")
+  reportsMerged          Report[]                     @relation("ReportMergedBy")
+  reportPhotos           ReportPhoto[]
+  reportComments         ReportComment[]
+  statusLogs             ReportStatusLog[]
+  verifications          ReportVerification[]
+  lettersGenerated       OfficialLetter[]             @relation("LetterGeneratedBy")
+  lettersSigned          OfficialLetter[]             @relation("LetterSignedBy")
+  notifications          Notification[]
+  assignmentsAssignedTo  ReportSectionAssignment[]    @relation("AssignmentAssignedTo")
+  assignmentsAssignedBy  ReportSectionAssignment[]    @relation("AssignmentAssignedBy")
+  progressUpdates        ReportProgressUpdate[]
+  relationsCreated       ReportRelation[]
+  relationLogsCreated    ReportRelationLog[]
+  budgetRequestsMade     ReportBudgetRequest[]        @relation("BudgetRequestedBy")
+  budgetRequestsReviewed ReportBudgetRequest[]        @relation("BudgetReviewedBy")
+  slaEventsCreated       ReportSlaEvent[]
+  slaAlertsTriggered     ReportSlaAlertNotification[]
+  performanceSnapshots   PerformanceSnapshot[]
+  swadayaCampaignsOpened SwadayaCampaign[]
+  contributionsMade      SwadayaContribution[]        @relation("ContributorProfile")
+  contributionsVerified  SwadayaContribution[]        @relation("VerifierProfile")
+
+  @@map("profiles")
+}
+
+// =====================================================================
+// LAPORAN (inti sistem)
+// =====================================================================
+
+model Report {
+  id                   String         @id @default(uuid()) @db.Char(36)
+  reportNumber         String         @unique @map("report_number") @db.VarChar(50)
+  reporterId           String         @map("reporter_id") @db.Char(36)
+  title                String         @db.VarChar(200)
+  description          String         @db.Text
+  categoryId           String?        @map("category_id") @db.Char(36)
+  dusunId              String?        @map("dusun_id") @db.Char(36)
+  latitude             Decimal        @db.Decimal(10, 7)
+  longitude            Decimal        @db.Decimal(10, 7)
+  autoAddress          String?        @map("auto_address") @db.Text
+  manualAddress        String?        @map("manual_address") @db.Text
+  status               ReportStatus   @default(pending)
+  priority             ReportPriority @default(sedang)
+  assetStatus          AssetStatus    @default(belum_diketahui) @map("asset_status")
+  authorityLevel       AuthorityLevel @default(belum_diketahui) @map("authority_level")
+  followUpType         FollowUpType   @default(belum_ditentukan) @map("follow_up_type")
+  assignedAgencyId     String?        @map("assigned_agency_id") @db.Char(36)
+  agencyId             String?        @map("agency_id") @db.Char(36)
+  assignedSectionId    String?        @map("assigned_section_id") @db.Char(36)
+  rejectionReason      String?        @map("rejection_reason") @db.Text
+  adminNote            String?        @map("admin_note") @db.Text
+  internalHandlingNote String?        @map("internal_handling_note") @db.Text
+  verificationDueAt    DateTime?      @map("verification_due_at")
+  resolutionDueAt      DateTime?      @map("resolution_due_at")
+  resolvedAt           DateTime?      @map("resolved_at")
+  slaStatus            SlaStatus      @default(on_time) @map("sla_status")
+  archivedAt           DateTime?      @map("archived_at")
+  archivedBy           String?        @map("archived_by") @db.Char(36)
+  archiveReason        String?        @map("archive_reason") @db.Text
+  mergedIntoReportId   String?        @map("merged_into_report_id") @db.Char(36)
+  mergedAt             DateTime?      @map("merged_at")
+  mergedBy             String?        @map("merged_by") @db.Char(36)
+  mergeReason          String?        @map("merge_reason") @db.Text
+  createdAt            DateTime       @default(now()) @map("created_at")
+  updatedAt            DateTime       @updatedAt @map("updated_at")
+
+  reporter         Profile         @relation("ReportReporter", fields: [reporterId], references: [id])
+  category         Category?       @relation(fields: [categoryId], references: [id])
+  dusun            Dusun?          @relation(fields: [dusunId], references: [id])
+  assignedAgency   Agency?         @relation("ReportAssignedAgency", fields: [assignedAgencyId], references: [id])
+  agency           Agency?         @relation("ReportAgency", fields: [agencyId], references: [id])
+  assignedSection  VillageSection? @relation("ReportAssignedSection", fields: [assignedSectionId], references: [id])
+  archivedByUser   Profile?        @relation("ReportArchivedBy", fields: [archivedBy], references: [id])
+  mergedByUser     Profile?        @relation("ReportMergedBy", fields: [mergedBy], references: [id])
+  mergedIntoReport Report?         @relation("ReportMergeParent", fields: [mergedIntoReportId], references: [id])
+  mergedChildren   Report[]        @relation("ReportMergeParent")
+
+  photos             ReportPhoto[]
+  comments           ReportComment[]
+  statusLogs         ReportStatusLog[]
+  verifications      ReportVerification[]
+  officialLetters    OfficialLetter[]
+  notifications      Notification[]
+  sectionAssignments ReportSectionAssignment[]
+  progressUpdates    ReportProgressUpdate[]
+  relationsAsSource  ReportRelation[]             @relation("RelationSource")
+  relationsAsTarget  ReportRelation[]             @relation("RelationTarget")
+  relationLogsSource ReportRelationLog[]          @relation("RelationLogSource")
+  relationLogsTarget ReportRelationLog[]          @relation("RelationLogTarget")
+  budgetRequests     ReportBudgetRequest[]
+  slaEvents          ReportSlaEvent[]
+  slaAlerts          ReportSlaAlertNotification[]
+  swadayaCampaigns   SwadayaCampaign[] // BARU — Cabang 5
+
+  @@map("reports")
+}
+
+model ReportPhoto {
+  id         String   @id @default(uuid()) @db.Char(36)
+  reportId   String   @map("report_id") @db.Char(36)
+  photoUrl   String   @map("photo_url") @db.VarChar(255)
+  filePath   String   @map("file_path") @db.VarChar(255)
+  uploadedBy String?  @map("uploaded_by") @db.Char(36)
+  createdAt  DateTime @default(now()) @map("created_at")
+
+  report   Report   @relation(fields: [reportId], references: [id])
+  uploader Profile? @relation(fields: [uploadedBy], references: [id])
+
+  @@map("report_photos")
+}
+
+model ReportComment {
+  id         String   @id @default(uuid()) @db.Char(36)
+  reportId   String   @map("report_id") @db.Char(36)
+  userId     String   @map("user_id") @db.Char(36)
+  comment    String   @db.Text
+  isInternal Boolean  @default(false) @map("is_internal")
+  createdAt  DateTime @default(now()) @map("created_at")
+
+  report Report  @relation(fields: [reportId], references: [id])
+  user   Profile @relation(fields: [userId], references: [id])
+
+  @@map("report_comments")
+}
+
+// Cabang 4 (fitur 4a): audit trail utama — sudah ada sejak versi magang
+model ReportStatusLog {
+  id        String        @id @default(uuid()) @db.Char(36)
+  reportId  String        @map("report_id") @db.Char(36)
+  oldStatus ReportStatus? @map("old_status")
+  newStatus ReportStatus  @map("new_status")
+  changedBy String?       @map("changed_by") @db.Char(36)
+  note      String?       @db.Text
+  createdAt DateTime      @default(now()) @map("created_at")
+
+  report Report   @relation(fields: [reportId], references: [id])
+  user   Profile? @relation(fields: [changedBy], references: [id])
+
+  @@map("report_status_logs")
+}
+
+model ReportVerification {
+  id               String   @id @default(uuid()) @db.Char(36)
+  reportId         String   @map("report_id") @db.Char(36)
+  verifiedBy       String   @map("verified_by") @db.Char(36)
+  isValid          Boolean  @map("is_valid")
+  verificationNote String?  @map("verification_note") @db.Text
+  verifiedAt       DateTime @default(now()) @map("verified_at")
+  createdAt        DateTime @default(now()) @map("created_at")
+
+  report   Report              @relation(fields: [reportId], references: [id])
+  verifier Profile             @relation(fields: [verifiedBy], references: [id])
+  photos   VerificationPhoto[]
+
+  @@map("report_verifications")
+}
+
+model VerificationPhoto {
+  id             String   @id @default(uuid()) @db.Char(36)
+  verificationId String   @map("verification_id") @db.Char(36)
+  photoUrl       String   @map("photo_url") @db.VarChar(255)
+  filePath       String   @map("file_path") @db.VarChar(255)
+  createdAt      DateTime @default(now()) @map("created_at")
+
+  verification ReportVerification @relation(fields: [verificationId], references: [id])
+
+  @@map("verification_photos")
+}
+
+model OfficialLetter {
+  id                String       @id @default(uuid()) @db.Char(36)
+  reportId          String       @map("report_id") @db.Char(36)
+  letterType        LetterType   @map("letter_type")
+  letterNumber      String?      @map("letter_number") @db.VarChar(100)
+  subject           String       @db.VarChar(255)
+  recipientAgencyId String?      @map("recipient_agency_id") @db.Char(36)
+  generatedBy       String?      @map("generated_by") @db.Char(36)
+  generatedAt       DateTime     @default(now()) @map("generated_at")
+  signedBy          String?      @map("signed_by") @db.Char(36)
+  signedAt          DateTime?    @map("signed_at")
+  pdfUrl            String?      @map("pdf_url") @db.VarChar(255)
+  filePath          String?      @map("file_path") @db.VarChar(255)
+  status            LetterStatus @default(draft)
+  body              String?      @db.Text
+  createdAt         DateTime     @default(now()) @map("created_at")
+  updatedAt         DateTime     @updatedAt @map("updated_at")
+
+  report          Report   @relation(fields: [reportId], references: [id])
+  recipientAgency Agency?  @relation(fields: [recipientAgencyId], references: [id])
+  generatedByUser Profile? @relation("LetterGeneratedBy", fields: [generatedBy], references: [id])
+  signedByUser    Profile? @relation("LetterSignedBy", fields: [signedBy], references: [id])
+
+  @@map("official_letters")
+}
+
+model Notification {
+  id                String             @id @default(uuid()) @db.Char(36)
+  userId            String?            @map("user_id") @db.Char(36)
+  reportId          String?            @map("report_id") @db.Char(36)
+  recipientEmail    String?            @map("recipient_email") @db.VarChar(150)
+  recipientPhone    String?            @map("recipient_phone") @db.VarChar(30)
+  subject           String             @db.VarChar(255)
+  message           String             @db.Text
+  status            NotificationStatus @default(pending)
+  channel           String             @default("email") @db.VarChar(30)
+  provider          String?            @db.VarChar(50)
+  providerMessageId String?            @map("provider_message_id") @db.VarChar(150)
+  sentAt            DateTime?          @map("sent_at")
+  readAt            DateTime?          @map("read_at")
+  errorMessage      String?            @map("error_message") @db.Text
+  createdAt         DateTime           @default(now()) @map("created_at")
+
+  user   Profile? @relation(fields: [userId], references: [id])
+  report Report?  @relation(fields: [reportId], references: [id])
+
+  @@map("notifications")
+}
+
+// =====================================================================
+// PENUGASAN KE KASI / SECTION
+// =====================================================================
+
+model ReportSectionAssignment {
+  id                    String           @id @default(uuid()) @db.Char(36)
+  reportId              String           @map("report_id") @db.Char(36)
+  sectionId             String           @map("section_id") @db.Char(36)
+  assignedTo            String?          @map("assigned_to") @db.Char(36)
+  assignedBy            String?          @map("assigned_by") @db.Char(36)
+  status                AssignmentStatus @default(assigned)
+  assignmentNote        String?          @map("assignment_note") @db.Text
+  returnedReason        String?          @map("returned_reason") @db.Text
+  handlingPlan          String?          @map("handling_plan") @db.Text
+  technicalNote         String?          @map("technical_note") @db.Text
+  estimatedCompletionAt DateTime?        @map("estimated_completion_at")
+  estimatedBudget       Decimal?         @map("estimated_budget") @db.Decimal(14, 2)
+  budgetNote            String?          @map("budget_note") @db.Text
+  escalationReason      String?          @map("escalation_reason") @db.Text
+  completionNote        String?          @map("completion_note") @db.Text
+  acceptedAt            DateTime?        @map("accepted_at")
+  returnedAt            DateTime?        @map("returned_at")
+  startedAt             DateTime?        @map("started_at")
+  budgetRequestedAt     DateTime?        @map("budget_requested_at")
+  escalationRequestedAt DateTime?        @map("escalation_requested_at")
+  submittedAt           DateTime?        @map("submitted_at")
+  completedAt           DateTime?        @map("completed_at")
+  createdAt             DateTime         @default(now()) @map("created_at")
+  updatedAt             DateTime         @updatedAt @map("updated_at")
+
+  report          Report                 @relation(fields: [reportId], references: [id])
+  section         VillageSection         @relation(fields: [sectionId], references: [id])
+  assignee        Profile?               @relation("AssignmentAssignedTo", fields: [assignedTo], references: [id])
+  assigner        Profile?               @relation("AssignmentAssignedBy", fields: [assignedBy], references: [id])
+  progressUpdates ReportProgressUpdate[]
+
+  @@map("report_section_assignments")
+}
+
+model ReportProgressUpdate {
+  id             String         @id @default(uuid()) @db.Char(36)
+  reportId       String         @map("report_id") @db.Char(36)
+  assignmentId   String?        @map("assignment_id") @db.Char(36)
+  createdBy      String?        @map("created_by") @db.Char(36)
+  progressTitle  String         @map("progress_title") @db.VarChar(200)
+  progressNote   String?        @map("progress_note") @db.Text
+  progressStatus ProgressStatus @default(progress) @map("progress_status")
+  createdAt      DateTime       @default(now()) @map("created_at")
+
+  report     Report                   @relation(fields: [reportId], references: [id])
+  assignment ReportSectionAssignment? @relation(fields: [assignmentId], references: [id])
+  creator    Profile?                 @relation(fields: [createdBy], references: [id])
+  photos     ReportProgressPhoto[]
+
+  @@map("report_progress_updates")
+}
+
+model ReportProgressPhoto {
+  id               String   @id @default(uuid()) @db.Char(36)
+  progressUpdateId String   @map("progress_update_id") @db.Char(36)
+  filePath         String   @map("file_path") @db.VarChar(255)
+  photoUrl         String   @map("photo_url") @db.VarChar(255)
+  createdAt        DateTime @default(now()) @map("created_at")
+
+  progressUpdate ReportProgressUpdate @relation(fields: [progressUpdateId], references: [id])
+
+  @@map("report_progress_photos")
+}
+
+// =====================================================================
+// RELASI ANTAR LAPORAN (duplicate / recurrence / related)
+// =====================================================================
+
+model ReportRelation {
+  id             String             @id @default(uuid()) @db.Char(36)
+  sourceReportId String             @map("source_report_id") @db.Char(36)
+  targetReportId String             @map("target_report_id") @db.Char(36)
+  relationType   ReportRelationType @map("relation_type")
+  reason         String?            @db.Text
+  note           String?            @db.Text
+  createdBy      String?            @map("created_by") @db.Char(36)
+  createdAt      DateTime           @default(now()) @map("created_at")
+  updatedAt      DateTime           @updatedAt @map("updated_at")
+
+  sourceReport Report   @relation("RelationSource", fields: [sourceReportId], references: [id])
+  targetReport Report   @relation("RelationTarget", fields: [targetReportId], references: [id])
+  creator      Profile? @relation(fields: [createdBy], references: [id])
+
+  @@map("report_relations")
+}
+
+model ReportRelationLog {
+  id             String               @id @default(uuid()) @db.Char(36)
+  sourceReportId String               @map("source_report_id") @db.Char(36)
+  targetReportId String               @map("target_report_id") @db.Char(36)
+  relationType   ReportRelationType   @map("relation_type")
+  action         ReportRelationAction
+  reason         String?              @db.Text
+  createdBy      String?              @map("created_by") @db.Char(36)
+  createdAt      DateTime             @default(now()) @map("created_at")
+
+  sourceReport Report   @relation("RelationLogSource", fields: [sourceReportId], references: [id])
+  targetReport Report   @relation("RelationLogTarget", fields: [targetReportId], references: [id])
+  creator      Profile? @relation(fields: [createdBy], references: [id])
+
+  @@map("report_relation_logs")
+}
+
+// =====================================================================
+// PENGAJUAN ANGGARAN (jalur sebelum swadaya, Cabang 5)
+// =====================================================================
+
+model ReportBudgetRequest {
+  id                   String              @id @default(uuid()) @db.Char(36)
+  reportId             String              @map("report_id") @db.Char(36)
+  requestedBy          String?             @map("requested_by") @db.Char(36)
+  sectionId            String?             @map("section_id") @db.Char(36)
+  summaryNote          String              @map("summary_note") @db.Text
+  totalEstimatedBudget Decimal             @default(0) @map("total_estimated_budget") @db.Decimal(14, 2)
+  status               BudgetRequestStatus @default(submitted)
+  reviewedBy           String?             @map("reviewed_by") @db.Char(36)
+  reviewedAt           DateTime?           @map("reviewed_at")
+  reviewNote           String?             @map("review_note") @db.Text
+  createdAt            DateTime            @default(now()) @map("created_at")
+  updatedAt            DateTime            @updatedAt @map("updated_at")
+
+  report    Report                    @relation(fields: [reportId], references: [id])
+  section   VillageSection?           @relation(fields: [sectionId], references: [id])
+  requester Profile?                  @relation("BudgetRequestedBy", fields: [requestedBy], references: [id])
+  reviewer  Profile?                  @relation("BudgetReviewedBy", fields: [reviewedBy], references: [id])
+  items     ReportBudgetRequestItem[]
+
+  @@map("report_budget_requests")
+}
+
+model ReportBudgetRequestItem {
+  id              String   @id @default(uuid()) @db.Char(36)
+  budgetRequestId String   @map("budget_request_id") @db.Char(36)
+  itemName        String   @map("item_name") @db.VarChar(200)
+  description     String?  @db.Text
+  quantity        Decimal  @default(1) @db.Decimal(10, 2)
+  unit            String   @default("unit") @db.VarChar(30)
+  unitPrice       Decimal  @default(0) @map("unit_price") @db.Decimal(14, 2)
+  subtotal        Decimal? @db.Decimal(14, 2) // dihitung di aplikasi: quantity * unitPrice
+  createdAt       DateTime @default(now()) @map("created_at")
+
+  budgetRequest ReportBudgetRequest @relation(fields: [budgetRequestId], references: [id])
+
+  @@map("report_budget_request_items")
+}
+
+// =====================================================================
+// CABANG 1 & 2 — SLA EVENT & ALERT (sudah ada di versi magang)
+// =====================================================================
+
+model ReportSlaEvent {
+  id                      String       @id @default(uuid()) @db.Char(36)
+  reportId                String       @map("report_id") @db.Char(36)
+  eventType               SlaEventType @map("event_type")
+  previousResolutionDueAt DateTime?    @map("previous_resolution_due_at")
+  newResolutionDueAt      DateTime?    @map("new_resolution_due_at")
+  note                    String?      @db.Text
+  createdBy               String?      @map("created_by") @db.Char(36)
+  createdAt               DateTime     @default(now()) @map("created_at")
+
+  report  Report   @relation(fields: [reportId], references: [id])
+  creator Profile? @relation(fields: [createdBy], references: [id])
+
+  @@map("report_sla_events")
+}
+
+// DIUBAH: tambah escalationLevel (Cabang 2, fitur 2a) supaya tercatat
+// jelas siapa saja yang seharusnya menerima notifikasi di tiap level
+model ReportSlaAlertNotification {
+  id              String          @id @default(uuid()) @db.Char(36)
+  reportId        String          @map("report_id") @db.Char(36)
+  alertType       SlaAlertType    @map("alert_type")
+  escalationLevel EscalationLevel @default(level_1) @map("escalation_level")
+  triggeredBy     String?         @map("triggered_by") @db.Char(36)
+  createdAt       DateTime        @default(now()) @map("created_at")
+
+  report    Report   @relation(fields: [reportId], references: [id])
+  triggerer Profile? @relation(fields: [triggeredBy], references: [id])
+
+  @@map("report_sla_alert_notifications")
+}
+
+// =====================================================================
+// BARU — CABANG 3: EVALUASI KINERJA / PREDIKAT KINERJA TERBAIK
+// =====================================================================
+
+model PerformanceSnapshot {
+  id                 String           @id @default(uuid()) @db.Char(36)
+  periodType         String           @map("period_type") @db.VarChar(20) // "bulanan" | "triwulanan"
+  periodStart        DateTime         @map("period_start") @db.Date
+  periodEnd          DateTime         @map("period_end") @db.Date
+  scopeType          PerformanceScope @map("scope_type")
+  profileId          String?          @map("profile_id") @db.Char(36) // diisi jika scopeType = kasi
+  dusunId            String?          @map("dusun_id") @db.Char(36) // diisi jika scopeType = dusun
+  categoryId         String?          @map("category_id") @db.Char(36) // diisi jika scopeType = kategori
+  totalReports       Int              @map("total_reports")
+  onTimePercentage   Decimal          @map("on_time_percentage") @db.Decimal(5, 2)
+  avgResolutionHours Decimal          @map("avg_resolution_hours") @db.Decimal(10, 2)
+  badgeLabel         String?          @map("badge_label") @db.VarChar(150)
+  createdAt          DateTime         @default(now()) @map("created_at")
+
+  profile  Profile?  @relation(fields: [profileId], references: [id])
+  dusun    Dusun?    @relation(fields: [dusunId], references: [id])
+  category Category? @relation(fields: [categoryId], references: [id])
+
+  @@map("performance_snapshots")
+}
+
+// =====================================================================
+// BARU — CABANG 5: PERCEPATAN PENYELESAIAN VIA SWADAYA MASYARAKAT
+// =====================================================================
+
+// Fitur 5a: dibuka otomatis oleh sistem saat assignment berstatus
+// waiting_budget melewati ambang waktu tertentu, atau dibuka manual
+// oleh Admin/Kepala Desa
+model SwadayaCampaign {
+  id           String                @id @default(uuid()) @db.Char(36)
+  reportId     String                @map("report_id") @db.Char(36)
+  status       SwadayaCampaignStatus @default(open)
+  targetNote   String?               @map("target_note") @db.Text
+  openedBy     String?               @map("opened_by") @db.Char(36)
+  openedAt     DateTime              @default(now()) @map("opened_at")
+  closedAt     DateTime?             @map("closed_at")
+  closedReason String?               @map("closed_reason") @db.Text
+  createdAt    DateTime              @default(now()) @map("created_at")
+  updatedAt    DateTime              @updatedAt @map("updated_at")
+
+  report        Report                @relation(fields: [reportId], references: [id])
+  openedByUser  Profile?              @relation(fields: [openedBy], references: [id])
+  contributions SwadayaContribution[]
+
+  @@map("swadaya_campaigns")
+}
+
+// Fitur 5b: kontribusi multi-jenis (uang, material, logistik, tenaga)
+// Fitur 5d: verifikasi & pencairan oleh Admin/Kepala Desa
+model SwadayaContribution {
+  id               String             @id @default(uuid()) @db.Char(36)
+  campaignId       String             @map("campaign_id") @db.Char(36)
+  contributorId    String?            @map("contributor_id") @db.Char(36) // nullable: warga tanpa akun
+  contributorName  String             @map("contributor_name") @db.VarChar(150)
+  contributorPhone String?            @map("contributor_phone") @db.VarChar(30)
+  type             ContributionType
+  amount           Decimal?           @db.Decimal(14, 2) // diisi jika type = uang
+  itemDescription  String?            @map("item_description") @db.Text // diisi jika type = material/logistik
+  itemQuantity     Decimal?           @map("item_quantity") @db.Decimal(10, 2)
+  itemUnit         String?            @map("item_unit") @db.VarChar(30)
+  availabilityNote String?            @map("availability_note") @db.Text // diisi jika type = tenaga
+  status           ContributionStatus @default(pending)
+  verifiedBy       String?            @map("verified_by") @db.Char(36)
+  verifiedAt       DateTime?          @map("verified_at")
+  createdAt        DateTime           @default(now()) @map("created_at")
+
+  campaign    SwadayaCampaign @relation(fields: [campaignId], references: [id])
+  contributor Profile?        @relation("ContributorProfile", fields: [contributorId], references: [id])
+  verifier    Profile?        @relation("VerifierProfile", fields: [verifiedBy], references: [id])
+
+  @@map("swadaya_contributions")
+}

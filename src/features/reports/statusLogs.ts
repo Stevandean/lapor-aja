@@ -1,6 +1,7 @@
 import { revalidatePath } from "next/cache";
 import { getProfile } from "@/src/lib/auth/getProfile";
-import { createClient } from "@/src/lib/supabase/server";
+import { prisma } from "@/src/lib/prisma";
+import type { ReportStatus } from "@prisma/client";
 import {
   notifyDuplicateReportersStatusChange,
   notifyReporterStatusChange,
@@ -37,18 +38,21 @@ export async function createReportStatusLog({
     return;
   }
 
-  const supabase = await createClient();
-
-  const { error } = await supabase.from("report_status_logs").insert({
-    report_id: reportId,
-    old_status: oldStatus,
-    new_status: newStatus,
-    changed_by: profile.id,
-    note,
-  });
-
-  if (error) {
-    console.error("Failed to create report status log:", error.message);
+  try {
+    await prisma.reportStatusLog.create({
+      data: {
+        reportId,
+        oldStatus: oldStatus as ReportStatus | null,
+        newStatus: newStatus as ReportStatus,
+        changedBy: profile.id,
+        note,
+      },
+    });
+  } catch (error) {
+    console.error(
+      "Failed to create report status log:",
+      error instanceof Error ? error.message : error
+    );
     return;
   }
 

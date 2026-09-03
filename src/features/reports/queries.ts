@@ -1,15 +1,19 @@
-import { createClient } from "@/src/lib/supabase/server";
+import { prisma } from "@/src/lib/prisma";
 
 export async function getReportFormOptions() {
-  const supabase = await createClient();
-
-  const [{ data: categories }, { data: hamlets }] = await Promise.all([
-    supabase.from("categories").select("id, name").order("name"),
-    supabase.from("dusuns").select("id, name").order("name"),
+  const [categories, hamlets] = await Promise.all([
+    prisma.category.findMany({
+      select: { id: true, name: true },
+      orderBy: { name: "asc" },
+    }),
+    prisma.dusun.findMany({
+      select: { id: true, name: true },
+      orderBy: { name: "asc" },
+    }),
   ]);
 
   return {
-    categories: categories ?? [],
-    hamlets: hamlets ?? [],
+    categories,
+    hamlets,
   };
 }

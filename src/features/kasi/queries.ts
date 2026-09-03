@@ -1,8 +1,7 @@
 import { redirect } from "next/navigation";
 import { getProfile } from "@/src/lib/auth/getProfile";
 import { getDashboardRouteByRole, ROUTES } from "@/src/lib/constants/routes";
-import { createAdminClient } from "@/src/lib/supabase/admin";
-import { createClient } from "@/src/lib/supabase/server";
+import { prisma } from "@/src/lib/prisma";
 
 const LIST_LIMIT = 50;
 
@@ -12,12 +11,8 @@ const activeStatuses = [
   "in_progress",
 ];
 
-function isMissingDatabaseRelationError(message: string | null | undefined) {
-  return Boolean(
-    message?.includes("Could not find the table") ||
-      message?.includes("schema cache") ||
-      message?.includes("does not exist")
-  );
+function toDisplayUrl(filePath: string | null | undefined) {
+  return filePath && filePath.startsWith("/") ? filePath : null;
 }
 
 async function requireKasi() {
@@ -33,6 +28,57 @@ async function requireKasi() {
 
   return profile;
 }
+
+function mapReportRow(report: {
+  id: string;
+  reportNumber: string;
+  title: string;
+  description: string;
+  status: string;
+  priority: string;
+  followUpType: string;
+  updatedAt: Date;
+  createdAt: Date;
+  category: { name: string } | null;
+  dusun: { name: string } | null;
+  reporter: { fullName: string; email: string; phoneNumber: string | null } | null;
+}) {
+  return {
+    id: report.id,
+    report_number: report.reportNumber,
+    title: report.title,
+    description: report.description,
+    status: report.status,
+    priority: report.priority,
+    follow_up_type: report.followUpType,
+    updated_at: report.updatedAt.toISOString(),
+    created_at: report.createdAt.toISOString(),
+    category: report.category,
+    hamlet: report.dusun,
+    reporter: report.reporter
+      ? {
+          full_name: report.reporter.fullName,
+          email: report.reporter.email,
+          phone_number: report.reporter.phoneNumber,
+        }
+      : null,
+  };
+}
+
+const assignedReportSelect = {
+  id: true,
+  reportNumber: true,
+  title: true,
+  description: true,
+  status: true,
+  priority: true,
+  followUpType: true,
+  updatedAt: true,
+  createdAt: true,
+  category: { select: { name: true } },
+  dusun: { select: { name: true } },
+  reporter: { select: { fullName: true, email: true, phoneNumber: true } },
+} as const;
 
 export async function getKasiDashboardData() {
   const profile = await requireKasi();
@@ -51,64 +97,32 @@ export async function getKasiDashboardData() {
     };
   }
 
-  const supabase = await createClient();
+  const reports = await prisma.report.findMany({
+    where: { assignedSectionId: profile.section_id },
+    select: assignedReportSelect,
+    orderBy: { updatedAt: "desc" },
+    take: LIST_LIMIT,
+  });
 
-  const { data, error } = await supabase
-    .from("reports")
-    .select(
-      `
-      id,
-      report_number,
-      title,
-      status,
-      priority,
-      follow_up_type,
-      updated_at,
-      created_at,
-      category:categories(name),
-      hamlet:dusuns(name),
-      reporter:profiles!reports_reporter_id_fkey(full_name, email, phone_number)
-      `
-    )
-    .eq("assigned_section_id", profile.section_id)
-    .order("updated_at", { ascending: false })
-    .limit(LIST_LIMIT);
-
-  if (error) {
-    console.error("Failed to fetch Kasi dashboard reports:", error.message);
-
-    return {
-      missingSection: false,
-      stats: {
-        totalAssignedReports: 0,
-        activeReports: 0,
-        waitingBudgetReports: 0,
-        inProgressReports: 0,
-        resolvedReports: 0,
-      },
-      recentReports: [],
-    };
-  }
-
-  const reports = data ?? [];
+  const mapped = reports.map(mapReportRow);
 
   return {
     missingSection: false,
     stats: {
-      totalAssignedReports: reports.length,
-      activeReports: reports.filter((report) =>
+      totalAssignedReports: mapped.length,
+      activeReports: mapped.filter((report) =>
         activeStatuses.includes(report.status)
       ).length,
-      waitingBudgetReports: reports.filter(
+      waitingBudgetReports: mapped.filter(
         (report) => report.status === "waiting_budget"
       ).length,
-      inProgressReports: reports.filter(
+      inProgressReports: mapped.filter(
         (report) => report.status === "in_progress"
       ).length,
-      resolvedReports: reports.filter((report) => report.status === "resolved")
+      resolvedReports: mapped.filter((report) => report.status === "resolved")
         .length,
     },
-    recentReports: reports.slice(0, 5),
+    recentReports: mapped.slice(0, 5),
   };
 }
 
@@ -122,42 +136,16 @@ export async function getKasiAssignedReports() {
     };
   }
 
-  const supabase = await createClient();
-
-  const { data, error } = await supabase
-    .from("reports")
-    .select(
-      `
-      id,
-      report_number,
-      title,
-      description,
-      status,
-      priority,
-      follow_up_type,
-      updated_at,
-      created_at,
-      category:categories(name),
-      hamlet:dusuns(name),
-      reporter:profiles!reports_reporter_id_fkey(full_name, email, phone_number)
-      `
-    )
-    .eq("assigned_section_id", profile.section_id)
-    .order("updated_at", { ascending: false })
-    .limit(LIST_LIMIT);
-
-  if (error) {
-    console.error("Failed to fetch Kasi assigned reports:", error.message);
-
-    return {
-      missingSection: false,
-      reports: [],
-    };
-  }
+  const reports = await prisma.report.findMany({
+    where: { assignedSectionId: profile.section_id },
+    select: assignedReportSelect,
+    orderBy: { updatedAt: "desc" },
+    take: LIST_LIMIT,
+  });
 
   return {
     missingSection: false,
-    reports: data ?? [],
+    reports: reports.map(mapReportRow),
   };
 }
 
@@ -168,262 +156,243 @@ export async function getKasiReportDetail(reportId: string) {
     return null;
   }
 
-  const supabase = await createClient();
+  const report = await prisma.report.findFirst({
+    where: { id: reportId, assignedSectionId: profile.section_id },
+    select: {
+      id: true,
+      reportNumber: true,
+      title: true,
+      description: true,
+      status: true,
+      priority: true,
+      assetStatus: true,
+      authorityLevel: true,
+      followUpType: true,
+      latitude: true,
+      longitude: true,
+      autoAddress: true,
+      manualAddress: true,
+      internalHandlingNote: true,
+      verificationDueAt: true,
+      resolutionDueAt: true,
+      resolvedAt: true,
+      createdAt: true,
+      updatedAt: true,
+      category: { select: { name: true } },
+      dusun: { select: { name: true } },
+      reporter: { select: { fullName: true, email: true, phoneNumber: true } },
+    },
+  });
 
-  const { data: report, error } = await supabase
-    .from("reports")
-    .select(
-      `
-      id,
-      report_number,
-      title,
-      description,
-      status,
-      priority,
-      asset_status,
-      authority_level,
-      follow_up_type,
-      latitude,
-      longitude,
-      auto_address,
-      manual_address,
-      internal_handling_note,
-      verification_due_at,
-      resolution_due_at,
-      resolved_at,
-      created_at,
-      updated_at,
-      category:categories(name),
-      hamlet:dusuns(name),
-      reporter:profiles!reports_reporter_id_fkey(full_name, email, phone_number)
-      `
-    )
-    .eq("id", reportId)
-    .eq("assigned_section_id", profile.section_id)
-    .maybeSingle();
-
-  if (error || !report) {
-    console.error("Failed to fetch Kasi report detail:", error?.message);
+  if (!report) {
     return null;
   }
 
-  const { data: section } = await supabase
-    .from("village_sections")
-    .select("name")
-    .eq("id", profile.section_id)
-    .maybeSingle();
+  const section = await prisma.villageSection.findUnique({
+    where: { id: profile.section_id },
+    select: { name: true },
+  });
 
-  const { data: photos } = await supabase
-    .from("report_photos")
-    .select("id, file_path, photo_url, created_at")
-    .eq("report_id", reportId)
-    .order("created_at", { ascending: true });
+  const photos = await prisma.reportPhoto.findMany({
+    where: { reportId },
+    select: { id: true, filePath: true, photoUrl: true, createdAt: true },
+    orderBy: { createdAt: "asc" },
+  });
 
-  const signedPhotos = await Promise.all(
-    (photos ?? []).map(async (photo) => {
-      const path = photo.file_path || photo.photo_url;
+  const signedPhotos = photos.map((photo) => ({
+    id: photo.id,
+    file_path: photo.filePath,
+    photo_url: photo.photoUrl,
+    created_at: photo.createdAt.toISOString(),
+    signedUrl: toDisplayUrl(photo.filePath),
+  }));
 
-      if (!path) {
-        return {
-          ...photo,
-          signedUrl: null,
-        };
-      }
+  const statusLogs = await prisma.reportStatusLog.findMany({
+    where: { reportId },
+    select: { id: true, oldStatus: true, newStatus: true, note: true, createdAt: true },
+    orderBy: { createdAt: "asc" },
+  });
 
-      const { data } = await supabase.storage
-        .from("report-photos")
-        .createSignedUrl(path, 60 * 60);
+  const progressUpdates = await prisma.reportProgressUpdate.findMany({
+    where: { reportId },
+    select: {
+      id: true,
+      progressTitle: true,
+      progressNote: true,
+      progressStatus: true,
+      createdBy: true,
+      createdAt: true,
+    },
+    orderBy: { createdAt: "desc" },
+  });
 
-      return {
-        ...photo,
-        signedUrl: data?.signedUrl ?? null,
-      };
-    })
-  );
-
-  const { data: statusLogs } = await supabase
-    .from("report_status_logs")
-    .select("id, old_status, new_status, note, created_at")
-    .eq("report_id", reportId)
-    .order("created_at", { ascending: true });
-
-  const adminSupabase = createAdminClient();
-  const { data: progressUpdates, error: progressUpdatesError } = await adminSupabase
-    .from("report_progress_updates")
-    .select(
-      `
-      id,
-      progress_title,
-      progress_note,
-      progress_status,
-      created_by,
-      created_at
-      `
-    )
-    .eq("report_id", reportId)
-    .order("created_at", { ascending: false });
-
-  if (progressUpdatesError) {
-    console.error(
-      "Failed to fetch Kasi progress updates:",
-      progressUpdatesError.message
-    );
-  }
-
-  const progressUpdateIds = (progressUpdates ?? []).map((update) => update.id);
-  const { data: progressPhotos, error: progressPhotosError } =
+  const progressUpdateIds = progressUpdates.map((update) => update.id);
+  const progressPhotos =
     progressUpdateIds.length > 0
-      ? await adminSupabase
-          .from("report_progress_photos")
-          .select(
-            `
-            id,
-            progress_update_id,
-            file_path,
-            photo_url,
-            created_at
-            `
-          )
-          .in("progress_update_id", progressUpdateIds)
-          .order("created_at", { ascending: true })
-      : { data: [], error: null };
+      ? await prisma.reportProgressPhoto.findMany({
+          where: { progressUpdateId: { in: progressUpdateIds } },
+          select: {
+            id: true,
+            progressUpdateId: true,
+            filePath: true,
+            photoUrl: true,
+            createdAt: true,
+          },
+          orderBy: { createdAt: "asc" },
+        })
+      : [];
 
-  if (progressPhotosError) {
-    console.error(
-      "Failed to fetch Kasi progress photos:",
-      progressPhotosError.message
-    );
-  }
+  const signedProgressPhotos = progressPhotos.map((photo) => ({
+    id: photo.id,
+    progress_update_id: photo.progressUpdateId,
+    file_path: photo.filePath,
+    photo_url: photo.photoUrl,
+    created_at: photo.createdAt.toISOString(),
+    signedUrl: toDisplayUrl(photo.filePath),
+  }));
 
-  const signedProgressPhotos = await Promise.all(
-    (progressPhotos ?? []).map(async (photo) => {
-      const path = photo.file_path || photo.photo_url;
-
-      if (!path) {
-        return {
-          ...photo,
-          signedUrl: null,
-        };
-      }
-
-      const { data } = await supabase.storage
-        .from("progress-photos")
-        .createSignedUrl(path, 60 * 60);
-
-      return {
-        ...photo,
-        signedUrl: data?.signedUrl ?? null,
-      };
-    })
-  );
-
-  const progressUpdatesWithPhotos = (progressUpdates ?? []).map((update) => ({
+  const progressUpdatesWithPhotos = progressUpdates.map((update) => ({
     id: update.id,
-    update_type: update.progress_status,
-    title: update.progress_title,
-    note: update.progress_note,
-    created_by: update.created_by,
-    created_at: update.created_at,
+    update_type: update.progressStatus,
+    title: update.progressTitle,
+    note: update.progressNote ?? "",
+    created_by: update.createdBy,
+    created_at: update.createdAt.toISOString(),
     photos: signedProgressPhotos.filter(
       (photo) => photo.progress_update_id === update.id
     ),
   }));
 
-  const { data: budgetRequests, error: budgetRequestsError } =
-    await adminSupabase
-      .from("report_budget_requests")
-      .select(
-        `
-        id,
-        report_id,
-        summary_note,
-        total_estimated_budget,
-        status,
-        reviewed_by,
-        reviewed_at,
-        review_note,
-        created_at,
-        updated_at
-        `
-      )
-      .eq("report_id", reportId)
-      .eq("section_id", profile.section_id)
-      .order("created_at", { ascending: false });
+  const budgetRequests = await prisma.reportBudgetRequest.findMany({
+    where: { reportId, sectionId: profile.section_id },
+    select: {
+      id: true,
+      reportId: true,
+      summaryNote: true,
+      totalEstimatedBudget: true,
+      status: true,
+      reviewedBy: true,
+      reviewedAt: true,
+      reviewNote: true,
+      createdAt: true,
+      updatedAt: true,
+    },
+    orderBy: { createdAt: "desc" },
+  });
 
-  if (budgetRequestsError && !isMissingDatabaseRelationError(budgetRequestsError.message)) {
-    console.error(
-      "Failed to fetch Kasi budget requests for report detail:",
-      budgetRequestsError.message
-    );
-  }
-
-  const budgetRequestIds = (budgetRequests ?? []).map((request) => request.id);
+  const budgetRequestIds = budgetRequests.map((request) => request.id);
   const reviewerIds = Array.from(
     new Set(
-      (budgetRequests ?? [])
-        .map((request) => request.reviewed_by)
+      budgetRequests
+        .map((request) => request.reviewedBy)
         .filter((id): id is string => Boolean(id))
     )
   );
 
-  const [{ data: budgetItems }, { data: reviewers }] = await Promise.all([
+  const [budgetItems, reviewers] = await Promise.all([
     budgetRequestIds.length > 0
-      ? adminSupabase
-          .from("report_budget_request_items")
-          .select(
-            `
-            id,
-            budget_request_id,
-            item_name,
-            description,
-            quantity,
-            unit,
-            unit_price,
-            subtotal,
-            created_at
-            `
-          )
-          .in("budget_request_id", budgetRequestIds)
-          .order("created_at", { ascending: true })
-      : Promise.resolve({ data: [] }),
+      ? prisma.reportBudgetRequestItem.findMany({
+          where: { budgetRequestId: { in: budgetRequestIds } },
+          select: {
+            id: true,
+            budgetRequestId: true,
+            itemName: true,
+            description: true,
+            quantity: true,
+            unit: true,
+            unitPrice: true,
+            subtotal: true,
+            createdAt: true,
+          },
+          orderBy: { createdAt: "asc" },
+        })
+      : Promise.resolve([]),
     reviewerIds.length > 0
-      ? adminSupabase
-          .from("profiles")
-          .select("id, full_name, email")
-          .in("id", reviewerIds)
-      : Promise.resolve({ data: [] }),
+      ? prisma.profile.findMany({
+          where: { id: { in: reviewerIds } },
+          select: { id: true, fullName: true, email: true },
+        })
+      : Promise.resolve([]),
   ]);
 
   const reviewerById = new Map(
-    (reviewers ?? []).map((reviewer) => [reviewer.id, reviewer])
+    reviewers.map((reviewer) => [
+      reviewer.id,
+      { full_name: reviewer.fullName, email: reviewer.email },
+    ])
   );
-  const budgetRequestsWithItems = (budgetRequests ?? []).map((request) => ({
-    ...request,
-    total_estimated_budget: Number(request.total_estimated_budget || 0),
-    reviewer: request.reviewed_by
-      ? reviewerById.get(request.reviewed_by) ?? null
+
+  const budgetRequestsWithItems = budgetRequests.map((request) => ({
+    id: request.id,
+    report_id: request.reportId,
+    summary_note: request.summaryNote,
+    total_estimated_budget: Number(request.totalEstimatedBudget || 0),
+    status: request.status,
+    reviewed_by: request.reviewedBy,
+    reviewed_at: request.reviewedAt?.toISOString() ?? null,
+    review_note: request.reviewNote,
+    created_at: request.createdAt.toISOString(),
+    updated_at: request.updatedAt.toISOString(),
+    reviewer: request.reviewedBy
+      ? reviewerById.get(request.reviewedBy) ?? null
       : null,
-    items: (budgetItems ?? [])
-      .filter((item) => item.budget_request_id === request.id)
+    items: budgetItems
+      .filter((item) => item.budgetRequestId === request.id)
       .map((item) => ({
-        ...item,
+        id: item.id,
+        budget_request_id: item.budgetRequestId,
+        item_name: item.itemName,
+        description: item.description,
         quantity: Number(item.quantity || 0),
-        unit_price: Number(item.unit_price || 0),
+        unit: item.unit,
+        unit_price: Number(item.unitPrice || 0),
         subtotal: Number(item.subtotal || 0),
+        created_at: item.createdAt.toISOString(),
       })),
   }));
 
   return {
     report: {
-      ...report,
+      id: report.id,
+      report_number: report.reportNumber,
+      title: report.title,
+      description: report.description,
+      status: report.status,
+      priority: report.priority,
+      asset_status: report.assetStatus,
+      authority_level: report.authorityLevel,
+      follow_up_type: report.followUpType,
+      latitude: Number(report.latitude),
+      longitude: Number(report.longitude),
+      auto_address: report.autoAddress,
+      manual_address: report.manualAddress,
+      internal_handling_note: report.internalHandlingNote,
+      verification_due_at: report.verificationDueAt?.toISOString() ?? null,
+      resolution_due_at: report.resolutionDueAt?.toISOString() ?? null,
+      resolved_at: report.resolvedAt?.toISOString() ?? null,
+      created_at: report.createdAt.toISOString(),
+      updated_at: report.updatedAt.toISOString(),
+      category: report.category,
+      hamlet: report.dusun,
       section,
+      reporter: report.reporter
+        ? {
+            full_name: report.reporter.fullName,
+            email: report.reporter.email,
+            phone_number: report.reporter.phoneNumber,
+          }
+        : null,
     },
     photos: signedPhotos,
-    statusLogs: statusLogs ?? [],
+    statusLogs: statusLogs.map((log) => ({
+      id: log.id,
+      old_status: log.oldStatus,
+      new_status: log.newStatus,
+      note: log.note,
+      created_at: log.createdAt.toISOString(),
+    })),
     progressUpdates: progressUpdatesWithPhotos,
-    budgetRequests: isMissingDatabaseRelationError(budgetRequestsError?.message)
-      ? []
-      : budgetRequestsWithItems,
+    budgetRequests: budgetRequestsWithItems,
   };
 }
 
@@ -456,121 +425,125 @@ export async function getKasiBudgetPageData() {
     };
   }
 
-  const supabase = await createClient();
+  const eligibleReportsRaw = await prisma.report.findMany({
+    where: {
+      assignedSectionId: profile.section_id,
+      status: { in: ["handled_by_village", "in_progress"] },
+    },
+    select: {
+      id: true,
+      reportNumber: true,
+      title: true,
+      status: true,
+      priority: true,
+      updatedAt: true,
+      category: { select: { name: true } },
+      dusun: { select: { name: true } },
+    },
+    orderBy: { updatedAt: "desc" },
+    take: LIST_LIMIT,
+  });
 
-  const { data: eligibleReports, error: reportsError } = await supabase
-    .from("reports")
-    .select(
-      `
-      id,
-      report_number,
-      title,
-      status,
-      priority,
-      updated_at,
-      category:categories(name),
-      hamlet:dusuns(name)
-      `
-    )
-    .eq("assigned_section_id", profile.section_id)
-    .in("status", ["handled_by_village", "in_progress"])
-    .order("updated_at", { ascending: false })
-    .limit(LIST_LIMIT);
+  const eligibleReports = eligibleReportsRaw.map((report) => ({
+    id: report.id,
+    report_number: report.reportNumber,
+    title: report.title,
+    status: report.status,
+    priority: report.priority,
+    updated_at: report.updatedAt.toISOString(),
+    category: report.category,
+    hamlet: report.dusun,
+  }));
 
-  if (reportsError) {
-    console.error("Failed to fetch Kasi budget reports:", reportsError.message);
-  }
-
-  const budgetSupabase = createAdminClient();
-  const { data: budgetRequests, error: requestsError } = await budgetSupabase
-    .from("report_budget_requests")
-    .select(
-      `
-      id,
-      report_id,
-      summary_note,
-      total_estimated_budget,
-      status,
-      created_at,
-      updated_at
-      `
-    )
-    .eq("section_id", profile.section_id)
-    .order("created_at", { ascending: false })
-    .limit(LIST_LIMIT);
-
-  if (requestsError) {
-    if (isMissingDatabaseRelationError(requestsError.message)) {
-      return {
-        missingSection: false,
-        budgetSchemaReady: false,
-        eligibleReports: eligibleReports ?? [],
-        budgetRequests: [],
-      };
-    }
-
-    console.error("Failed to fetch Kasi budget requests:", requestsError.message);
-
-    return {
-      missingSection: false,
-      budgetSchemaReady: true,
-      eligibleReports: eligibleReports ?? [],
-      budgetRequests: [],
-    };
-  }
+  const budgetRequests = await prisma.reportBudgetRequest.findMany({
+    where: { sectionId: profile.section_id },
+    select: {
+      id: true,
+      reportId: true,
+      summaryNote: true,
+      totalEstimatedBudget: true,
+      status: true,
+      createdAt: true,
+      updatedAt: true,
+    },
+    orderBy: { createdAt: "desc" },
+    take: LIST_LIMIT,
+  });
 
   const requestReportIds = Array.from(
-    new Set((budgetRequests ?? []).map((request) => request.report_id))
+    new Set(budgetRequests.map((request) => request.reportId))
   );
-  const requestIds = (budgetRequests ?? []).map((request) => request.id);
+  const requestIds = budgetRequests.map((request) => request.id);
   const pendingBudgetReportIds = new Set(
-    (budgetRequests ?? [])
+    budgetRequests
       .filter((request) => request.status === "submitted")
-      .map((request) => request.report_id)
+      .map((request) => request.reportId)
   );
 
-  const [{ data: requestReports }, { data: requestItems }] = await Promise.all([
+  const [requestReports, requestItems] = await Promise.all([
     requestReportIds.length > 0
-      ? budgetSupabase
-          .from("reports")
-          .select("id, report_number, title, status, priority")
-          .in("id", requestReportIds)
-      : Promise.resolve({ data: [] }),
+      ? prisma.report.findMany({
+          where: { id: { in: requestReportIds } },
+          select: { id: true, reportNumber: true, title: true, status: true, priority: true },
+        })
+      : Promise.resolve([]),
     requestIds.length > 0
-      ? budgetSupabase
-          .from("report_budget_request_items")
-          .select(
-            `
-            id,
-            budget_request_id,
-            item_name,
-            description,
-            quantity,
-            unit,
-            unit_price,
-            subtotal
-            `
-          )
-          .in("budget_request_id", requestIds)
-      : Promise.resolve({ data: [] }),
+      ? prisma.reportBudgetRequestItem.findMany({
+          where: { budgetRequestId: { in: requestIds } },
+          select: {
+            id: true,
+            budgetRequestId: true,
+            itemName: true,
+            description: true,
+            quantity: true,
+            unit: true,
+            unitPrice: true,
+            subtotal: true,
+          },
+        })
+      : Promise.resolve([]),
   ]);
 
   const reportById = new Map(
-    (requestReports ?? []).map((report) => [report.id, report])
+    requestReports.map((report) => [
+      report.id,
+      {
+        id: report.id,
+        report_number: report.reportNumber,
+        title: report.title,
+        status: report.status,
+        priority: report.priority,
+      },
+    ])
   );
 
   return {
     missingSection: false,
     budgetSchemaReady: true,
-    eligibleReports: (eligibleReports ?? []).filter(
+    eligibleReports: eligibleReports.filter(
       (report) => !pendingBudgetReportIds.has(report.id)
     ),
-    budgetRequests: (budgetRequests ?? []).map((request) => ({
-      ...request,
-      report: reportById.get(request.report_id) ?? null,
-      items: (requestItems ?? []).filter(
-        (item) => item.budget_request_id === request.id
-      ),
+    budgetRequests: budgetRequests.map((request) => ({
+      id: request.id,
+      report_id: request.reportId,
+      summary_note: request.summaryNote,
+      total_estimated_budget: Number(request.totalEstimatedBudget || 0),
+      status: request.status,
+      created_at: request.createdAt.toISOString(),
+      updated_at: request.updatedAt.toISOString(),
+      report: reportById.get(request.reportId) ?? null,
+      items: requestItems
+        .filter((item) => item.budgetRequestId === request.id)
+        .map((item) => ({
+          id: item.id,
+          budget_request_id: item.budgetRequestId,
+          item_name: item.itemName,
+          description: item.description,
+          quantity: Number(item.quantity || 0),
+          unit: item.unit,
+          unit_price: Number(item.unitPrice || 0),
+          subtotal: Number(item.subtotal || 0),
+        })),
     })),
   };
 }

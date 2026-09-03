@@ -1,5 +1,6 @@
 import { revalidatePath } from "next/cache";
-import { createAdminClient } from "@/src/lib/supabase/admin";
+import { prisma } from "@/src/lib/prisma";
+import type { UserRole } from "@prisma/client";
 
 type NotificationReport = {
   id: string;
@@ -131,54 +132,39 @@ export async function notifyDuplicateReportersInternalStatusChange({
     return;
   }
 
-  const supabase = createAdminClient();
   const masterReport = await getReportById(masterReportId);
 
   if (!masterReport) {
     return;
   }
 
-  const { data: relations, error: relationsError } = await supabase
-    .from("report_relations")
-    .select("source_report_id")
-    .eq("target_report_id", masterReportId)
-    .eq("relation_type", "duplicate");
-
-  if (relationsError) {
-    if (!isMissingReportRelationsError(relationsError.message)) {
-      console.error(
-        "Failed to fetch duplicate relations for internal notifications:",
-        relationsError.message
-      );
-    }
-
-    return;
-  }
+  const relations = await prisma.reportRelation.findMany({
+    where: { targetReportId: masterReportId, relationType: "duplicate" },
+    select: { sourceReportId: true },
+  });
 
   const sourceReportIds = Array.from(
-    new Set((relations ?? []).map((relation) => relation.source_report_id))
+    new Set(relations.map((relation) => relation.sourceReportId))
   );
 
   if (sourceReportIds.length === 0) {
     return;
   }
 
-  const { data: sourceReports, error: sourceReportsError } = await supabase
-    .from("reports")
-    .select("id, report_number, title, reporter_id")
-    .in("id", sourceReportIds);
-
-  if (sourceReportsError) {
-    console.error(
-      "Failed to fetch duplicate source reports for internal notifications:",
-      sourceReportsError.message
-    );
-    return;
-  }
+  const sourceReportRows = await prisma.report.findMany({
+    where: { id: { in: sourceReportIds } },
+    select: { id: true, reportNumber: true, title: true, reporterId: true },
+  });
+  const sourceReports = sourceReportRows.map((row) => ({
+    id: row.id,
+    report_number: row.reportNumber,
+    title: row.title,
+    reporter_id: row.reporterId,
+  }));
 
   const reporterIds = Array.from(
     new Set(
-      (sourceReports ?? [])
+      sourceReports
         .map((sourceReport) => sourceReport.reporter_id)
         .filter((id): id is string => Boolean(id))
     )
@@ -190,7 +176,7 @@ export async function notifyDuplicateReportersInternalStatusChange({
       ? `${formatStatus(oldStatus)} ke ${formatStatus(newStatus)}`
       : formatStatus(newStatus);
 
-  for (const sourceReport of sourceReports ?? []) {
+  for (const sourceReport of sourceReports) {
     const reporter = sourceReport.reporter_id
       ? reportersById.get(sourceReport.reporter_id)
       : null;
@@ -297,20 +283,31 @@ export async function notifyRoleInternal({
     return;
   }
 
-  const supabase = createAdminClient();
-  const { data, error } = await supabase
-    .from("profiles")
-    .select("id, full_name, email, notification_internal_enabled")
-    .in("role", uniqueRoles)
-    .eq("is_active", true);
+  let profiles: { id: string; fullName: string | null; email: string | null; notificationInternalEnabled: boolean }[];
 
-  if (error) {
-    console.error("Failed to fetch role notification recipients:", error.message);
+  try {
+    profiles = await prisma.profile.findMany({
+      where: {
+        role: { in: uniqueRoles as UserRole[] },
+        isActive: true,
+      },
+      select: {
+        id: true,
+        fullName: true,
+        email: true,
+        notificationInternalEnabled: true,
+      },
+    });
+  } catch (error) {
+    console.error(
+      "Failed to fetch role notification recipients:",
+      error instanceof Error ? error.message : error
+    );
     return;
   }
 
-  for (const profile of data ?? []) {
-    if (profile.notification_internal_enabled === false) {
+  for (const profile of profiles) {
+    if (profile.notificationInternalEnabled === false) {
       continue;
     }
 
@@ -330,21 +327,23 @@ export async function notifyHamletHeadsForVerification({
   reportNumber,
   reportTitle,
 }: NotifyHamletHeadsParams) {
-  const supabase = createAdminClient();
-  const { data, error } = await supabase
-    .from("profiles")
-    .select("id, full_name, email, notification_internal_enabled")
-    .eq("role", "kepala_dusun")
-    .eq("dusun_id", hamletId)
-    .eq("is_active", true);
+  let profiles: { id: string; email: string | null; notificationInternalEnabled: boolean }[];
 
-  if (error) {
-    console.error("Failed to fetch hamlet head recipients:", error.message);
+  try {
+    profiles = await prisma.profile.findMany({
+      where: { role: "kepala_dusun", dusunId: hamletId, isActive: true },
+      select: { id: true, email: true, notificationInternalEnabled: true },
+    });
+  } catch (error) {
+    console.error(
+      "Failed to fetch hamlet head recipients:",
+      error instanceof Error ? error.message : error
+    );
     return;
   }
 
-  for (const profile of data ?? []) {
-    if (profile.notification_internal_enabled === false) {
+  for (const profile of profiles) {
+    if (profile.notificationInternalEnabled === false) {
       continue;
     }
 
@@ -364,21 +363,23 @@ export async function notifySectionKasiAssignment({
   reportNumber,
   reportTitle,
 }: NotifySectionKasiParams) {
-  const supabase = createAdminClient();
-  const { data, error } = await supabase
-    .from("profiles")
-    .select("id, full_name, email, notification_internal_enabled")
-    .eq("role", "kasi")
-    .eq("section_id", sectionId)
-    .eq("is_active", true);
+  let profiles: { id: string; email: string | null; notificationInternalEnabled: boolean }[];
 
-  if (error) {
-    console.error("Failed to fetch Kasi recipients:", error.message);
+  try {
+    profiles = await prisma.profile.findMany({
+      where: { role: "kasi", sectionId, isActive: true },
+      select: { id: true, email: true, notificationInternalEnabled: true },
+    });
+  } catch (error) {
+    console.error(
+      "Failed to fetch Kasi recipients:",
+      error instanceof Error ? error.message : error
+    );
     return;
   }
 
-  for (const profile of data ?? []) {
-    if (profile.notification_internal_enabled === false) {
+  for (const profile of profiles) {
+    if (profile.notificationInternalEnabled === false) {
       continue;
     }
 
@@ -393,19 +394,29 @@ export async function notifySectionKasiAssignment({
 }
 
 async function getReportById(reportId: string) {
-  const supabase = createAdminClient();
-  const { data, error } = await supabase
-    .from("reports")
-    .select("id, report_number, title, reporter_id")
-    .eq("id", reportId)
-    .maybeSingle();
+  try {
+    const report = await prisma.report.findUnique({
+      where: { id: reportId },
+      select: { id: true, reportNumber: true, title: true, reporterId: true },
+    });
 
-  if (error) {
-    console.error("Failed to fetch report for internal notification:", error.message);
+    if (!report) {
+      return null;
+    }
+
+    return {
+      id: report.id,
+      report_number: report.reportNumber,
+      title: report.title,
+      reporter_id: report.reporterId,
+    } as NotificationReport;
+  } catch (error) {
+    console.error(
+      "Failed to fetch report for internal notification:",
+      error instanceof Error ? error.message : error
+    );
     return null;
   }
-
-  return data as NotificationReport | null;
 }
 
 async function getProfileById(profileId: string) {
@@ -421,22 +432,30 @@ async function getProfilesById(profileIds: string[]) {
     return profilesById;
   }
 
-  const supabase = createAdminClient();
-  const { data, error } = await supabase
-    .from("profiles")
-    .select("id, full_name, email, notification_internal_enabled")
-    .in("id", profileIds);
+  try {
+    const rows = await prisma.profile.findMany({
+      where: { id: { in: profileIds } },
+      select: {
+        id: true,
+        fullName: true,
+        email: true,
+        notificationInternalEnabled: true,
+      },
+    });
 
-  if (error) {
+    for (const row of rows) {
+      profilesById.set(row.id, {
+        id: row.id,
+        full_name: row.fullName,
+        email: row.email,
+        notification_internal_enabled: row.notificationInternalEnabled,
+      });
+    }
+  } catch (error) {
     console.error(
       "Failed to fetch profiles for internal notifications:",
-      error.message
+      error instanceof Error ? error.message : error
     );
-    return profilesById;
-  }
-
-  for (const profile of data ?? []) {
-    profilesById.set(profile.id, profile as NotificationProfile);
   }
 
   return profilesById;
@@ -449,65 +468,30 @@ async function createInternalNotification({
   subject,
   message,
 }: CreateInternalNotificationParams) {
-  const supabase = createAdminClient();
-  const sentAt = new Date().toISOString();
-  const basePayload = {
-    user_id: userId,
-    report_id: reportId,
-    recipient_email: recipientEmail || "",
-    subject,
-    message,
-    status: "sent",
-    sent_at: sentAt,
-    error_message: null,
-  };
+  try {
+    await prisma.notification.create({
+      data: {
+        userId,
+        reportId,
+        recipientEmail: recipientEmail || "",
+        subject,
+        message,
+        status: "sent",
+        sentAt: new Date(),
+        errorMessage: null,
+        channel: "internal",
+        provider: null,
+        providerMessageId: null,
+      },
+    });
 
-  const { error } = await supabase.from("notifications").insert({
-    ...basePayload,
-    channel: "internal",
-    provider: null,
-    provider_message_id: null,
-  });
-
-  if (!error) {
     revalidatePath("/dashboard");
-    return;
-  }
-
-  if (!isMissingNotificationChannelError(error.message)) {
-    console.error("Failed to create internal notification:", error.message);
-    return;
-  }
-
-  const { error: fallbackError } = await supabase
-    .from("notifications")
-    .insert(basePayload);
-
-  if (fallbackError) {
+  } catch (error) {
     console.error(
-      "Failed to create fallback internal notification:",
-      fallbackError.message
+      "Failed to create internal notification:",
+      error instanceof Error ? error.message : error
     );
-    return;
   }
-
-  revalidatePath("/dashboard");
-}
-
-function isMissingNotificationChannelError(message: string | null | undefined) {
-  return Boolean(
-    message?.includes("notifications") &&
-      message.includes("channel") &&
-      (message.includes("schema cache") || message.includes("column"))
-  );
-}
-
-function isMissingReportRelationsError(message: string | null | undefined) {
-  return Boolean(
-    message?.includes("report_relations") &&
-      (message.includes("does not exist") ||
-        message.includes("Could not find the table"))
-  );
 }
 
 function formatStatus(status: string) {

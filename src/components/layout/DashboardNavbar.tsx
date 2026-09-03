@@ -1,5 +1,7 @@
 "use client";
 
+import Image from "next/image";
+import { useState } from "react";
 import { Menu } from "lucide-react";
 import { NotificationBell } from "@/src/components/layout/NotificationBell";
 import type { NavbarNotification } from "@/src/features/notifications/queries";
@@ -49,14 +51,46 @@ export function DashboardNavbar({
           <p className="text-xs text-muted-foreground">{profile.email}</p>
         </div>
 
-        <div className="flex h-10 w-10 items-center justify-center rounded-full bg-primary-100 text-sm font-bold text-primary-700">
-          {initial}
-        </div>
+        <NavbarAvatar
+          key={profile.avatar_signed_url ?? "avatar-fallback"}
+          src={profile.avatar_signed_url}
+          fullName={profile.full_name}
+          initial={initial}
+        />
 
         <span className="hidden rounded-full border border-primary-100 bg-primary-50 px-3 py-1 text-xs font-semibold text-primary-700 md:inline-flex">
           {ROLE_LABELS[profile.role]}
         </span>
       </div>
     </header>
+  );
+}
+
+function NavbarAvatar({
+  src,
+  fullName,
+  initial,
+}: {
+  src?: string | null;
+  fullName: string;
+  initial: string;
+}) {
+  const [isImageAvailable, setIsImageAvailable] = useState(Boolean(src));
+
+  return (
+    <div className="relative flex h-10 w-10 items-center justify-center overflow-hidden rounded-full border border-primary-100 bg-primary-100 text-sm font-bold text-primary-700">
+      {isImageAvailable && src ? (
+        <Image
+          src={src}
+          alt={`Foto profil ${fullName}`}
+          fill
+          sizes="40px"
+          className="object-cover"
+          onError={() => setIsImageAvailable(false)}
+        />
+      ) : (
+        initial
+      )}
+    </div>
   );
 }

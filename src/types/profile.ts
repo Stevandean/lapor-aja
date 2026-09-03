@@ -15,6 +15,7 @@ export type UserProfile = {
   dusun_id: string | null;
   section_id: string | null;
   avatar_url: string | null;
+  avatar_signed_url?: string | null;
   notification_internal_enabled: boolean;
   notification_email_enabled: boolean;
   notification_whatsapp_enabled: boolean;

@@ -2,11 +2,15 @@
 
 import { revalidatePath } from "next/cache";
 import { redirect } from "next/navigation";
-import { createClient } from "@/src/lib/supabase/server";
+import { promises as fs } from "fs";
+import path from "path";
+import { prisma } from "@/src/lib/prisma";
 import { getProfile } from "@/src/lib/auth/getProfile";
 import { getDashboardRouteByRole, ROUTES } from "@/src/lib/constants/routes";
 import { createReportStatusLog } from "@/src/features/reports/statusLogs";
 import { ActionState } from "@/src/types/action";
+
+const UPLOADS_ROOT = path.join(process.cwd(), "public", "uploads", "reports");
 
 function generateReportNumber() {
   const date = new Date();
@@ -97,56 +101,63 @@ export async function createReport(
     }
   }
 
-  const supabase = await createClient();
+  let report: { id: string };
 
-  const { data: report, error: reportError } = await supabase
-    .from("reports")
-    .insert({
-      report_number: generateReportNumber(),
-      reporter_id: profile.id,
-      title,
-      description,
-      latitude,
-      longitude,
-      auto_address: autoAddress || null,
-      status: "pending",
-      priority: "sedang",
-      asset_status: "belum_diketahui",
-      authority_level: "belum_diketahui",
-      follow_up_type: "belum_ditentukan",
-    })
-    .select("id")
-    .single();
-
-  if (reportError || !report) {
-    throw new Error(reportError?.message || "Gagal membuat laporan.");
+  try {
+    report = await prisma.report.create({
+      data: {
+        reportNumber: generateReportNumber(),
+        reporterId: profile.id,
+        title,
+        description,
+        latitude,
+        longitude,
+        autoAddress: autoAddress || null,
+        status: "pending",
+        priority: "sedang",
+        assetStatus: "belum_diketahui",
+        authorityLevel: "belum_diketahui",
+        followUpType: "belum_ditentukan",
+      },
+      select: { id: true },
+    });
+  } catch (error) {
+    throw new Error(
+      error instanceof Error ? error.message : "Gagal membuat laporan."
+    );
   }
+
+  const reportDir = path.join(UPLOADS_ROOT, report.id);
+  await fs.mkdir(reportDir, { recursive: true });
 
   for (const photo of photos) {
     const extension = photo.name.split(".").pop() || "jpg";
     const fileName = `${crypto.randomUUID()}.${extension}`;
-    const filePath = `${profile.id}/${report.id}/${fileName}`;
+    const filePath = `/uploads/reports/${report.id}/${fileName}`;
+    const absolutePath = path.join(reportDir, fileName);
 
-    const { error: uploadError } = await supabase.storage
-      .from("report-photos")
-      .upload(filePath, photo, {
-        contentType: photo.type,
-        upsert: false,
-      });
-
-    if (uploadError) {
-      throw new Error(uploadError.message);
+    try {
+      const buffer = Buffer.from(await photo.arrayBuffer());
+      await fs.writeFile(absolutePath, buffer);
+    } catch (error) {
+      throw new Error(
+        error instanceof Error ? error.message : "Gagal menyimpan foto laporan."
+      );
     }
 
-    const { error: photoError } = await supabase.from("report_photos").insert({
-      report_id: report.id,
-      uploaded_by: profile.id,
-      file_path: filePath,
-      photo_url: filePath,
-    });
-
-    if (photoError) {
-      throw new Error(photoError.message);
+    try {
+      await prisma.reportPhoto.create({
+        data: {
+          reportId: report.id,
+          uploadedBy: profile.id,
+          filePath,
+          photoUrl: filePath,
+        },
+      });
+    } catch (error) {
+      throw new Error(
+        error instanceof Error ? error.message : "Gagal menyimpan data foto laporan."
+      );
     }
 
     await createReportStatusLog({
