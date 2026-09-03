@@ -1,7 +1,7 @@
 "use server";
 
 import { revalidatePath } from "next/cache";
-import { createClient } from "@/src/lib/supabase/server";
+import { prisma } from "@/src/lib/prisma";
 import type { ActionState } from "@/src/types/action";
 import { requireMasterDataManager } from "./shared";
 
@@ -25,22 +25,22 @@ export async function createAgency(
     };
   }
 
-  const supabase = await createClient();
-
-  const { error } = await supabase.from("agencies").insert({
-    name,
-    description: description || null,
-    contact_person: contactPerson || null,
-    phone: phone || null,
-    email: email || null,
-    address: address || null,
-    is_active: true,
-  });
-
-  if (error) {
+  try {
+    await prisma.agency.create({
+      data: {
+        name,
+        description: description || null,
+        contactPerson: contactPerson || null,
+        phone: phone || null,
+        email: email || null,
+        address: address || null,
+        isActive: true,
+      },
+    });
+  } catch (error) {
     return {
       status: "error",
-      message: error.message,
+      message: error instanceof Error ? error.message : "Gagal membuat instansi.",
     };
   }
 
@@ -81,25 +81,22 @@ export async function updateAgency(
     };
   }
 
-  const supabase = await createClient();
-
-  const { error } = await supabase
-    .from("agencies")
-    .update({
-      name,
-      description: description || null,
-      contact_person: contactPerson || null,
-      phone: phone || null,
-      email: email || null,
-      address: address || null,
-      updated_at: new Date().toISOString(),
-    })
-    .eq("id", agencyId);
-
-  if (error) {
+  try {
+    await prisma.agency.update({
+      where: { id: agencyId },
+      data: {
+        name,
+        description: description || null,
+        contactPerson: contactPerson || null,
+        phone: phone || null,
+        email: email || null,
+        address: address || null,
+      },
+    });
+  } catch (error) {
     return {
       status: "error",
-      message: error.message,
+      message: error instanceof Error ? error.message : "Gagal memperbarui instansi.",
     };
   }
 
@@ -135,20 +132,15 @@ export async function toggleAgencyStatus(
     };
   }
 
-  const supabase = await createClient();
-
-  const { error } = await supabase
-    .from("agencies")
-    .update({
-      is_active: action === "activate",
-      updated_at: new Date().toISOString(),
-    })
-    .eq("id", agencyId);
-
-  if (error) {
+  try {
+    await prisma.agency.update({
+      where: { id: agencyId },
+      data: { isActive: action === "activate" },
+    });
+  } catch (error) {
     return {
       status: "error",
-      message: error.message,
+      message: error instanceof Error ? error.message : "Gagal mengubah status instansi.",
     };
   }
 

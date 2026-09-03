@@ -1,7 +1,7 @@
 "use server";
 
 import { revalidatePath } from "next/cache";
-import { createClient } from "@/src/lib/supabase/server";
+import { prisma } from "@/src/lib/prisma";
 import type { ActionState } from "@/src/types/action";
 import { requireMasterDataManager } from "./shared";
 
@@ -21,18 +21,18 @@ export async function createDusun(
     };
   }
 
-  const supabase = await createClient();
-
-  const { error } = await supabase.from("dusuns").insert({
-    name,
-    description: description || null,
-    is_active: true,
-  });
-
-  if (error) {
+  try {
+    await prisma.dusun.create({
+      data: {
+        name,
+        description: description || null,
+        isActive: true,
+      },
+    });
+  } catch (error) {
     return {
       status: "error",
-      message: error.message,
+      message: error instanceof Error ? error.message : "Gagal membuat dusun.",
     };
   }
 
@@ -69,21 +69,18 @@ export async function updateDusun(
     };
   }
 
-  const supabase = await createClient();
-
-  const { error } = await supabase
-    .from("dusuns")
-    .update({
-      name,
-      description: description || null,
-      updated_at: new Date().toISOString(),
-    })
-    .eq("id", dusunId);
-
-  if (error) {
+  try {
+    await prisma.dusun.update({
+      where: { id: dusunId },
+      data: {
+        name,
+        description: description || null,
+      },
+    });
+  } catch (error) {
     return {
       status: "error",
-      message: error.message,
+      message: error instanceof Error ? error.message : "Gagal memperbarui dusun.",
     };
   }
 
@@ -119,20 +116,15 @@ export async function toggleDusunStatus(
     };
   }
 
-  const supabase = await createClient();
-
-  const { error } = await supabase
-    .from("dusuns")
-    .update({
-      is_active: action === "activate",
-      updated_at: new Date().toISOString(),
-    })
-    .eq("id", dusunId);
-
-  if (error) {
+  try {
+    await prisma.dusun.update({
+      where: { id: dusunId },
+      data: { isActive: action === "activate" },
+    });
+  } catch (error) {
     return {
       status: "error",
-      message: error.message,
+      message: error instanceof Error ? error.message : "Gagal mengubah status dusun.",
     };
   }
 

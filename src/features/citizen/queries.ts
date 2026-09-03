@@ -1,8 +1,7 @@
 import { redirect } from "next/navigation";
 import { getProfile } from "@/src/lib/auth/getProfile";
 import { getDashboardRouteByRole, ROUTES } from "@/src/lib/constants/routes";
-import { createAdminClient } from "@/src/lib/supabase/admin";
-import { createClient } from "@/src/lib/supabase/server";
+import { prisma } from "@/src/lib/prisma";
 
 const LIST_LIMIT = 50;
 
@@ -30,282 +29,273 @@ const progressStatuses = [
   "in_progress",
 ];
 
-type CitizenRelatedReport = {
+function toDisplayUrl(filePath: string | null | undefined) {
+  return filePath && filePath.startsWith("/") ? filePath : null;
+}
+
+const citizenReportListSelect = {
+  id: true,
+  reportNumber: true,
+  title: true,
+  status: true,
+  priority: true,
+  createdAt: true,
+  updatedAt: true,
+  resolvedAt: true,
+  category: { select: { name: true } },
+  dusun: { select: { name: true } },
+} as const;
+
+function mapCitizenReportListItem(report: {
   id: string;
-  report_number: string;
+  reportNumber: string;
   title: string;
   status: string;
   priority: string;
-  updated_at?: string | null;
-  resolved_at?: string | null;
-};
-
-type CitizenReportRelationRow = {
-  id: string;
-  relation_type: "duplicate" | "recurrence";
-  note: string | null;
-  created_at: string;
-  source?: CitizenRelatedReport[] | CitizenRelatedReport | null;
-  target?: CitizenRelatedReport[] | CitizenRelatedReport | null;
-};
-
-function isMissingReportRelationsError(message: string | null | undefined) {
-  return Boolean(
-    message?.includes("report_relations") &&
-      (message.includes("does not exist") ||
-        message.includes("Could not find the table"))
-  );
+  createdAt: Date;
+  updatedAt: Date;
+  resolvedAt: Date | null;
+  category: { name: string } | null;
+  dusun: { name: string } | null;
+}) {
+  return {
+    id: report.id,
+    report_number: report.reportNumber,
+    title: report.title,
+    status: report.status,
+    priority: report.priority,
+    created_at: report.createdAt.toISOString(),
+    updated_at: report.updatedAt.toISOString(),
+    resolved_at: report.resolvedAt?.toISOString() ?? null,
+    category: report.category,
+    hamlet: report.dusun,
+  };
 }
 
 export async function getCitizenDashboardData() {
   const profile = await requireCitizen();
-  const supabase = await createClient();
 
-  const { data, error } = await supabase
-    .from("reports")
-    .select(
-      `
-      id,
-      report_number,
-      title,
-      status,
-      priority,
-      created_at,
-      updated_at,
-      resolved_at,
-      category:categories(name),
-      hamlet:dusuns(name)
-    `
-    )
-    .eq("reporter_id", profile.id)
-    .order("updated_at", { ascending: false });
+  const reports = await prisma.report.findMany({
+    where: { reporterId: profile.id },
+    select: citizenReportListSelect,
+    orderBy: { updatedAt: "desc" },
+  });
 
-  if (error) {
-    console.error("Failed to fetch citizen dashboard data:", error.message);
-
-    return {
-      reports: [],
-      stats: {
-        totalReports: 0,
-        pendingReports: 0,
-        inProcessReports: 0,
-        resolvedReports: 0,
-        archivedReports: 0,
-      },
-    };
-  }
-
-  const reports = data ?? [];
+  const mappedReports = reports.map(mapCitizenReportListItem);
 
   return {
-    reports: reports.slice(0, 5),
+    reports: mappedReports.slice(0, 5),
     stats: {
-      totalReports: reports.length,
-      pendingReports: reports.filter((report) => report.status === "pending")
-        .length,
-      inProcessReports: reports.filter((report) =>
+      totalReports: mappedReports.length,
+      pendingReports: mappedReports.filter(
+        (report) => report.status === "pending"
+      ).length,
+      inProcessReports: mappedReports.filter((report) =>
         progressStatuses.includes(report.status)
       ).length,
-      resolvedReports: reports.filter((report) => report.status === "resolved")
-        .length,
-      archivedReports: reports.filter((report) => report.status === "archived")
-        .length,
+      resolvedReports: mappedReports.filter(
+        (report) => report.status === "resolved"
+      ).length,
+      archivedReports: mappedReports.filter(
+        (report) => report.status === "archived"
+      ).length,
     },
   };
 }
 
 export async function getCitizenReports() {
   const profile = await requireCitizen();
-  const supabase = await createClient();
 
-  const { data, error } = await supabase
-    .from("reports")
-    .select(
-      `
-      id,
-      report_number,
-      title,
-      description,
-      status,
-      priority,
-      created_at,
-      updated_at,
-      resolved_at,
-      category:categories(name),
-      hamlet:dusuns(name)
-    `
-    )
-    .eq("reporter_id", profile.id)
-    .order("updated_at", { ascending: false })
-    .limit(LIST_LIMIT);
+  const reports = await prisma.report.findMany({
+    where: { reporterId: profile.id },
+    select: {
+      id: true,
+      reportNumber: true,
+      title: true,
+      description: true,
+      status: true,
+      priority: true,
+      createdAt: true,
+      updatedAt: true,
+      resolvedAt: true,
+      category: { select: { name: true } },
+      dusun: { select: { name: true } },
+    },
+    orderBy: { updatedAt: "desc" },
+    take: LIST_LIMIT,
+  });
 
-  if (error) {
-    console.error("Failed to fetch citizen reports:", error.message);
-    return [];
-  }
+  return reports.map((report) => ({
+    id: report.id,
+    report_number: report.reportNumber,
+    title: report.title,
+    description: report.description,
+    status: report.status,
+    priority: report.priority,
+    created_at: report.createdAt.toISOString(),
+    updated_at: report.updatedAt.toISOString(),
+    resolved_at: report.resolvedAt?.toISOString() ?? null,
+    category: report.category,
+    hamlet: report.dusun,
+  }));
+}
 
-  return data ?? [];
+function mapRelatedReport(report: {
+  id: string;
+  reportNumber: string;
+  title: string;
+  status: string;
+  priority: string;
+  updatedAt: Date;
+  resolvedAt: Date | null;
+}) {
+  return {
+    id: report.id,
+    report_number: report.reportNumber,
+    title: report.title,
+    status: report.status,
+    priority: report.priority,
+    updated_at: report.updatedAt.toISOString(),
+    resolved_at: report.resolvedAt?.toISOString() ?? null,
+  };
 }
 
 export async function getCitizenReportDetail(reportId: string) {
   const profile = await requireCitizen();
-  const supabase = await createClient();
 
-  const { data: report, error } = await supabase
-    .from("reports")
-    .select(
-      `
-      id,
-      report_number,
-      title,
-      description,
-      status,
-      priority,
-      admin_note,
-      rejection_reason,
-      latitude,
-      longitude,
-      auto_address,
-      manual_address,
-      created_at,
-      updated_at,
-      resolved_at,
-      category:categories(name),
-      hamlet:dusuns(name)
-    `
-    )
-    .eq("id", reportId)
-    .eq("reporter_id", profile.id)
-    .maybeSingle();
+  const report = await prisma.report.findFirst({
+    where: { id: reportId, reporterId: profile.id },
+    select: {
+      id: true,
+      reportNumber: true,
+      title: true,
+      description: true,
+      status: true,
+      priority: true,
+      adminNote: true,
+      rejectionReason: true,
+      latitude: true,
+      longitude: true,
+      autoAddress: true,
+      manualAddress: true,
+      createdAt: true,
+      updatedAt: true,
+      resolvedAt: true,
+      category: { select: { name: true } },
+      dusun: { select: { name: true } },
+    },
+  });
 
-    const { data: statusLogs } = await supabase
-        .from("report_status_logs")
-        .select(
-            `
-            id,
-            old_status,
-            new_status,
-            note,
-            created_at
-        `
-        )
-        .eq("report_id", reportId)
-        .order("created_at", { ascending: true });
-
-  if (error || !report) {
-    console.error("Failed to fetch citizen report detail:", error?.message);
+  if (!report) {
     return null;
   }
 
-  const { data: photos } = await supabase
-    .from("report_photos")
-    .select("id, file_path, photo_url, created_at")
-    .eq("report_id", reportId)
-    .order("created_at", { ascending: true });
+  const [statusLogs, photos, outgoingRelations, incomingRelations] =
+    await Promise.all([
+      prisma.reportStatusLog.findMany({
+        where: { reportId },
+        select: { id: true, oldStatus: true, newStatus: true, note: true, createdAt: true },
+        orderBy: { createdAt: "asc" },
+      }),
+      prisma.reportPhoto.findMany({
+        where: { reportId },
+        select: { id: true, filePath: true, photoUrl: true, createdAt: true },
+        orderBy: { createdAt: "asc" },
+      }),
+      prisma.reportRelation.findMany({
+        where: { sourceReportId: reportId },
+        select: {
+          id: true,
+          relationType: true,
+          note: true,
+          createdAt: true,
+          targetReport: {
+            select: {
+              id: true,
+              reportNumber: true,
+              title: true,
+              status: true,
+              priority: true,
+              updatedAt: true,
+              resolvedAt: true,
+            },
+          },
+        },
+        orderBy: { createdAt: "desc" },
+      }),
+      prisma.reportRelation.findMany({
+        where: { targetReportId: reportId },
+        select: {
+          id: true,
+          relationType: true,
+          note: true,
+          createdAt: true,
+          sourceReport: {
+            select: {
+              id: true,
+              reportNumber: true,
+              title: true,
+              status: true,
+              priority: true,
+              updatedAt: true,
+              resolvedAt: true,
+            },
+          },
+        },
+        orderBy: { createdAt: "desc" },
+      }),
+    ]);
 
-  const signedPhotos = await Promise.all(
-    (photos ?? []).map(async (photo) => {
-      const path = photo.file_path || photo.photo_url;
-
-      if (!path) {
-        return {
-          ...photo,
-          signed_url: null,
-        };
-      }
-
-      const { data } = await supabase.storage
-        .from("report-photos")
-        .createSignedUrl(path, 60 * 60);
-
-      return {
-        ...photo,
-        signed_url: data?.signedUrl ?? null,
-      };
-    })
-  );
-
-  const adminSupabase = createAdminClient();
-  let relationSchemaReady = true;
-  let outgoingRelations: CitizenReportRelationRow[] = [];
-  let incomingRelations: CitizenReportRelationRow[] = [];
-
-  const [outgoingResult, incomingResult] = await Promise.all([
-    adminSupabase
-      .from("report_relations")
-      .select(
-        `
-        id,
-        relation_type,
-        note,
-        created_at,
-        target:reports!report_relations_target_report_id_fkey(
-          id,
-          report_number,
-          title,
-          status,
-          priority,
-          updated_at,
-          resolved_at
-        )
-        `
-      )
-      .eq("source_report_id", reportId)
-      .order("created_at", { ascending: false }),
-    adminSupabase
-      .from("report_relations")
-      .select(
-        `
-        id,
-        relation_type,
-        note,
-        created_at,
-        source:reports!report_relations_source_report_id_fkey(
-          id,
-          report_number,
-          title,
-          status,
-          priority,
-          updated_at,
-          resolved_at
-        )
-        `
-      )
-      .eq("target_report_id", reportId)
-      .order("created_at", { ascending: false }),
-  ]);
-
-  const relationErrors = [outgoingResult.error, incomingResult.error].filter(
-    Boolean
-  );
-  const missingRelationSchema = relationErrors.some((relationError) =>
-    isMissingReportRelationsError(relationError?.message)
-  );
-
-  if (missingRelationSchema) {
-    relationSchemaReady = false;
-  } else {
-    for (const relationError of relationErrors) {
-      if (relationError) {
-        console.error(
-          "Failed to fetch citizen report relations:",
-          relationError.message
-        );
-      }
-    }
-
-    outgoingRelations = (outgoingResult.data ?? []) as CitizenReportRelationRow[];
-    incomingRelations = (incomingResult.data ?? []) as CitizenReportRelationRow[];
-  }
+  const signedPhotos = photos.map((photo) => ({
+    id: photo.id,
+    file_path: photo.filePath,
+    photo_url: photo.photoUrl,
+    created_at: photo.createdAt.toISOString(),
+    signed_url: toDisplayUrl(photo.filePath),
+  }));
 
   return {
-    ...report,
+    id: report.id,
+    report_number: report.reportNumber,
+    title: report.title,
+    description: report.description,
+    status: report.status,
+    priority: report.priority,
+    admin_note: report.adminNote,
+    rejection_reason: report.rejectionReason,
+    latitude: Number(report.latitude),
+    longitude: Number(report.longitude),
+    auto_address: report.autoAddress,
+    manual_address: report.manualAddress,
+    created_at: report.createdAt.toISOString(),
+    updated_at: report.updatedAt.toISOString(),
+    resolved_at: report.resolvedAt?.toISOString() ?? null,
+    category: report.category,
+    hamlet: report.dusun,
     photos: signedPhotos,
-    status_logs: statusLogs ?? [],
+    status_logs: statusLogs.map((log) => ({
+      id: log.id,
+      old_status: log.oldStatus,
+      new_status: log.newStatus,
+      note: log.note,
+      created_at: log.createdAt.toISOString(),
+    })),
     report_relations: {
-      schemaReady: relationSchemaReady,
-      outgoing: outgoingRelations,
-      incoming: incomingRelations,
+      schemaReady: true,
+      outgoing: outgoingRelations.map((relation) => ({
+        id: relation.id,
+        relation_type: relation.relationType as "duplicate" | "recurrence",
+        note: relation.note,
+        created_at: relation.createdAt.toISOString(),
+        target: mapRelatedReport(relation.targetReport),
+      })),
+      incoming: incomingRelations.map((relation) => ({
+        id: relation.id,
+        relation_type: relation.relationType as "duplicate" | "recurrence",
+        note: relation.note,
+        created_at: relation.createdAt.toISOString(),
+        source: mapRelatedReport(relation.sourceReport),
+      })),
     },
   };
 }

@@ -1,7 +1,7 @@
 "use server";
 
 import { revalidatePath } from "next/cache";
-import { createClient } from "@/src/lib/supabase/server";
+import { prisma } from "@/src/lib/prisma";
 import type { ActionState } from "@/src/types/action";
 import { requireMasterDataManager } from "./shared";
 
@@ -21,18 +21,18 @@ export async function createCategory(
     };
   }
 
-  const supabase = await createClient();
-
-  const { error } = await supabase.from("categories").insert({
-    name,
-    description: description || null,
-    is_active: true,
-  });
-
-  if (error) {
+  try {
+    await prisma.category.create({
+      data: {
+        name,
+        description: description || null,
+        isActive: true,
+      },
+    });
+  } catch (error) {
     return {
       status: "error",
-      message: error.message,
+      message: error instanceof Error ? error.message : "Gagal membuat kategori.",
     };
   }
 
@@ -68,21 +68,18 @@ export async function updateCategory(
     };
   }
 
-  const supabase = await createClient();
-
-  const { error } = await supabase
-    .from("categories")
-    .update({
-      name,
-      description: description || null,
-      updated_at: new Date().toISOString(),
-    })
-    .eq("id", categoryId);
-
-  if (error) {
+  try {
+    await prisma.category.update({
+      where: { id: categoryId },
+      data: {
+        name,
+        description: description || null,
+      },
+    });
+  } catch (error) {
     return {
       status: "error",
-      message: error.message,
+      message: error instanceof Error ? error.message : "Gagal memperbarui kategori.",
     };
   }
 
@@ -117,20 +114,15 @@ export async function toggleCategoryStatus(
     };
   }
 
-  const supabase = await createClient();
-
-  const { error } = await supabase
-    .from("categories")
-    .update({
-      is_active: action === "activate",
-      updated_at: new Date().toISOString(),
-    })
-    .eq("id", categoryId);
-
-  if (error) {
+  try {
+    await prisma.category.update({
+      where: { id: categoryId },
+      data: { isActive: action === "activate" },
+    });
+  } catch (error) {
     return {
       status: "error",
-      message: error.message,
+      message: error instanceof Error ? error.message : "Gagal mengubah status kategori.",
     };
   }
 

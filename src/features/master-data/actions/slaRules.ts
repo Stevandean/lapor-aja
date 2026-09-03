@@ -1,7 +1,7 @@
 "use server";
 
 import { revalidatePath } from "next/cache";
-import { createClient } from "@/src/lib/supabase/server";
+import { prisma } from "@/src/lib/prisma";
 import type { ActionState } from "@/src/types/action";
 import { requireMasterDataManager } from "./shared";
 
@@ -43,22 +43,19 @@ export async function updateSlaRule(
     };
   }
 
-  const supabase = await createClient();
-
-  const { error } = await supabase
-    .from("sla_rules")
-    .update({
-      verification_hours: verificationHours,
-      resolution_hours: resolutionHours,
-      description: description || null,
-      updated_at: new Date().toISOString(),
-    })
-    .eq("id", ruleId);
-
-  if (error) {
+  try {
+    await prisma.slaRule.update({
+      where: { id: ruleId },
+      data: {
+        verificationHours,
+        resolutionHours,
+        description: description || null,
+      },
+    });
+  } catch (error) {
     return {
       status: "error",
-      message: error.message,
+      message: error instanceof Error ? error.message : "Gagal memperbarui aturan SLA.",
     };
   }
 
@@ -95,72 +92,31 @@ export async function toggleSlaRuleStatus(
     };
   }
 
-  const supabase = await createClient();
-  const now = new Date().toISOString();
+  const rule = await prisma.slaRule.findUnique({
+    where: { id: ruleId },
+    select: { id: true, priority: true },
+  });
+
+  if (!rule) {
+    return {
+      status: "error",
+      message: "Aturan SLA tidak ditemukan.",
+    };
+  }
 
   if (action === "activate") {
-    const { data: rule, error: ruleError } = await supabase
-      .from("sla_rules")
-      .select("id, priority")
-      .eq("id", ruleId)
-      .maybeSingle();
-
-    if (ruleError || !rule) {
-      return {
-        status: "error",
-        message: ruleError?.message || "Aturan SLA tidak ditemukan.",
-      };
-    }
-
-    const { error: deactivateSiblingsError } = await supabase
-      .from("sla_rules")
-      .update({
-        is_active: false,
-        updated_at: now,
-      })
-      .eq("priority", rule.priority)
-      .neq("id", ruleId);
-
-    if (deactivateSiblingsError) {
-      return {
-        status: "error",
-        message: deactivateSiblingsError.message,
-      };
-    }
+    await prisma.slaRule.updateMany({
+      where: { priority: rule.priority, id: { not: ruleId } },
+      data: { isActive: false },
+    });
   }
 
   if (action === "deactivate") {
-    const { data: rule, error: ruleError } = await supabase
-      .from("sla_rules")
-      .select("id, priority")
-      .eq("id", ruleId)
-      .maybeSingle();
+    const activeSiblingCount = await prisma.slaRule.count({
+      where: { priority: rule.priority, isActive: true, id: { not: ruleId } },
+    });
 
-    if (ruleError || !rule) {
-      return {
-        status: "error",
-        message: ruleError?.message || "Aturan SLA tidak ditemukan.",
-      };
-    }
-
-    const { count, error: activeCountError } = await supabase
-      .from("sla_rules")
-      .select("*", {
-        count: "exact",
-        head: true,
-      })
-      .eq("priority", rule.priority)
-      .eq("is_active", true)
-      .neq("id", ruleId);
-
-    if (activeCountError) {
-      return {
-        status: "error",
-        message: activeCountError.message,
-      };
-    }
-
-    if ((count ?? 0) === 0) {
+    if (activeSiblingCount === 0) {
       return {
         status: "error",
         message:
@@ -169,18 +125,15 @@ export async function toggleSlaRuleStatus(
     }
   }
 
-  const { error } = await supabase
-    .from("sla_rules")
-    .update({
-      is_active: action === "activate",
-      updated_at: now,
-    })
-    .eq("id", ruleId);
-
-  if (error) {
+  try {
+    await prisma.slaRule.update({
+      where: { id: ruleId },
+      data: { isActive: action === "activate" },
+    });
+  } catch (error) {
     return {
       status: "error",
-      message: error.message,
+      message: error instanceof Error ? error.message : "Gagal mengubah status aturan SLA.",
     };
   }
 

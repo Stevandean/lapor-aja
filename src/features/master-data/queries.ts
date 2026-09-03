@@ -1,7 +1,7 @@
 import { redirect } from "next/navigation";
 import { getProfile } from "@/src/lib/auth/getProfile";
 import { getDashboardRouteByRole, ROUTES } from "@/src/lib/constants/routes";
-import { createClient } from "@/src/lib/supabase/server";
+import { prisma } from "@/src/lib/prisma";
 
 async function requireMasterDataManager() {
   const profile = await getProfile();
@@ -20,115 +20,113 @@ async function requireMasterDataManager() {
 export async function getCategoryMasterData() {
   await requireMasterDataManager();
 
-  const supabase = await createClient();
+  const categories = await prisma.category.findMany({
+    select: {
+      id: true,
+      name: true,
+      description: true,
+      isActive: true,
+      createdAt: true,
+      updatedAt: true,
+    },
+    orderBy: { name: "asc" },
+  });
 
-  const { data, error } = await supabase
-    .from("categories")
-    .select(
-      `
-      id,
-      name,
-      description,
-      is_active,
-      created_at,
-      updated_at
-      `
-    )
-    .order("name", { ascending: true });
-
-  if (error) {
-    console.error("Failed to fetch categories:", error.message);
-    return [];
-  }
-
-  return data ?? [];
+  return categories.map((category) => ({
+    id: category.id,
+    name: category.name,
+    description: category.description,
+    is_active: category.isActive,
+    created_at: category.createdAt.toISOString(),
+    updated_at: category.updatedAt.toISOString(),
+  }));
 }
 
 export async function getDusunMasterData() {
   await requireMasterDataManager();
 
-  const supabase = await createClient();
+  const dusuns = await prisma.dusun.findMany({
+    select: {
+      id: true,
+      name: true,
+      description: true,
+      isActive: true,
+      createdAt: true,
+      updatedAt: true,
+    },
+    orderBy: { name: "asc" },
+  });
 
-  const { data, error } = await supabase
-    .from("dusuns")
-    .select(
-      `
-      id,
-      name,
-      description,
-      is_active,
-      created_at,
-      updated_at
-      `
-    )
-    .order("name", { ascending: true });
-
-  if (error) {
-    console.error("Failed to fetch dusuns:", error.message);
-    return [];
-  }
-
-  return data ?? [];
+  return dusuns.map((dusun) => ({
+    id: dusun.id,
+    name: dusun.name,
+    description: dusun.description,
+    is_active: dusun.isActive,
+    created_at: dusun.createdAt.toISOString(),
+    updated_at: dusun.updatedAt.toISOString(),
+  }));
 }
 
 export async function getAgencyMasterData() {
   await requireMasterDataManager();
 
-  const supabase = await createClient();
+  const agencies = await prisma.agency.findMany({
+    select: {
+      id: true,
+      name: true,
+      description: true,
+      contactPerson: true,
+      phone: true,
+      email: true,
+      address: true,
+      isActive: true,
+      createdAt: true,
+      updatedAt: true,
+    },
+    orderBy: { name: "asc" },
+  });
 
-  const { data, error } = await supabase
-    .from("agencies")
-    .select(
-      `
-      id,
-      name,
-      description,
-      contact_person,
-      phone,
-      email,
-      address,
-      is_active,
-      created_at,
-      updated_at
-      `
-    )
-    .order("name", { ascending: true });
-
-  if (error) {
-    console.error("Failed to fetch agencies:", error.message);
-    return [];
-  }
-
-  return data ?? [];
+  return agencies.map((agency) => ({
+    id: agency.id,
+    name: agency.name,
+    description: agency.description,
+    contact_person: agency.contactPerson,
+    phone: agency.phone,
+    email: agency.email,
+    address: agency.address,
+    is_active: agency.isActive,
+    created_at: agency.createdAt.toISOString(),
+    updated_at: agency.updatedAt.toISOString(),
+  }));
 }
 
 export async function getSlaRuleMasterData() {
   await requireMasterDataManager();
 
-  const supabase = await createClient();
+  const slaRules = await prisma.slaRule.findMany({
+    select: {
+      id: true,
+      priority: true,
+      verificationHours: true,
+      resolutionHours: true,
+      description: true,
+      isActive: true,
+      createdAt: true,
+      updatedAt: true,
+    },
+    orderBy: { resolutionHours: "asc" },
+  });
 
-  const { data, error } = await supabase
-    .from("sla_rules")
-    .select(
-      `
-      id,
-      priority,
-      verification_hours,
-      resolution_hours,
-      description,
-      is_active,
-      created_at,
-      updated_at
-      `
-    )
-    .order("resolution_hours", { ascending: true });
-
-  if (error) {
-    console.error("Failed to fetch SLA rules:", error.message);
-    return [];
-  }
-
-  return data ?? [];
+  return slaRules.map((rule) => ({
+    id: rule.id,
+    priority: rule.priority,
+    verification_hours: rule.verificationHours,
+    resolution_hours: rule.resolutionHours,
+    description: rule.description,
+    is_active: rule.isActive,
+    created_at: rule.createdAt.toISOString(),
+    updated_at: rule.updatedAt.toISOString(),
+  }));
 }
 
 export type VillageSection = {
@@ -143,29 +141,28 @@ export type VillageSection = {
 };
 
 export async function getVillageSections() {
-  const supabase = await createClient();
+  const sections = await prisma.villageSection.findMany({
+    select: {
+      id: true,
+      name: true,
+      code: true,
+      description: true,
+      isActive: true,
+      sortOrder: true,
+      createdAt: true,
+      updatedAt: true,
+    },
+    orderBy: [{ sortOrder: "asc" }, { createdAt: "asc" }],
+  });
 
-  const { data, error } = await supabase
-    .from("village_sections")
-    .select(
-      `
-      id,
-      name,
-      code,
-      description,
-      is_active,
-      sort_order,
-      created_at,
-      updated_at
-      `
-    )
-    .order("sort_order", { ascending: true })
-    .order("created_at", { ascending: true });
-
-  if (error) {
-    console.error("Failed to fetch village sections:", error.message);
-    return [];
-  }
-
-  return data ?? [];
+  return sections.map((section) => ({
+    id: section.id,
+    name: section.name,
+    code: section.code,
+    description: section.description,
+    is_active: section.isActive,
+    sort_order: section.sortOrder,
+    created_at: section.createdAt.toISOString(),
+    updated_at: section.updatedAt.toISOString(),
+  }));
 }

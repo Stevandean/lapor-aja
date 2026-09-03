@@ -506,10 +506,43 @@ sudah full Prisma):
    dengan smoke test nyata (seed 1 user uji, jalankan dev server, coba akses
    halaman/alur terkait sungguhan lewat curl atau browser, baru bersihkan
    data ujinya) — bukan cuma percaya build lolos.
-6. **Setiap menyelesaikan satu tugas dari daftar bernomor, sertakan
-   "Penjelasan singkat" 2-4 kalimat berbahasa sederhana** (bukan jargon
-   teknis berat) yang menjawab: apa yang diubah, KENAPA itu perlu, dan APA
-   DAMPAKNYA kalau tidak diperbaiki. Alasan: pengguna adalah mahasiswa yang
-   akan sidang TA ini — dia harus benar-benar paham sistemnya sendiri untuk
-   bisa menjawab pertanyaan penguji, bukan cuma menerima laporan teknis
-   tanpa konteks yang dia sendiri tidak bisa jelaskan ulang.
+6. **Format pelaporan tugas (menggantikan "Penjelasan singkat" versi lama,
+   karena formatnya kurang jelas)**: untuk SETIAP tugas
+   bernomor/berlabel dalam satu prompt (Tugas 1/2/3 atau Tugas A/B/C/dst),
+   laporkan TERPISAH per tugas — jangan digabung jadi satu ringkasan besar
+   di akhir semua tugas. Tiap tugas dapat blok laporannya sendiri, ditulis
+   segera setelah tugas itu selesai, dengan format:
+
+   ```
+   ## Tugas [label] — [nama singkat]
+   **Dikerjakan:** apa saja yang benar-benar diubah/dibuat/dicek (bahasa
+   sederhana, bukan jargon berat)
+   **Hasil:** apa buktinya berhasil (build lulus? test lulus? dicoba manual
+   di browser?) — sebutkan spesifik, jangan cuma "berhasil"
+   **Kurang/belum lengkap:** apa yang SENGAJA belum disentuh, atau risiko
+   yang masih ada meski tugas ini "selesai" — kalau benar-benar tidak ada
+   yang kurang, tulis eksplisit "tidak ada catatan"
+   ```
+
+   Alasan: pengguna adalah mahasiswa yang akan sidang TA ini — dia harus
+   benar-benar paham sistemnya sendiri untuk bisa menjawab pertanyaan
+   penguji, bukan cuma menerima laporan teknis tanpa konteks yang dia
+   sendiri tidak bisa jelaskan ulang. Format lama ("Penjelasan singkat"
+   2-4 kalimat bebas di akhir tugas) tidak cukup jelas soal APA yang jadi
+   bukti keberhasilan vs APA yang sengaja dilewati — format baru ini
+   memaksa ketiga hal itu (dikerjakan/hasil/kurang) selalu eksplisit dan
+   terpisah per tugas, bukan tercampur di satu paragraf.
+
+   **Kasus khusus — laporan berbasis daftar temuan** (misal sapuan/audit
+   yang hasilnya satu daftar berisi banyak titik, bukan satu deliverable
+   tunggal): laporkan per LOKASI TEMUAN, bukan per tugas, dengan format:
+
+   ```
+   ## [nama file : nama fungsi/halaman]
+   **Dipakai untuk apa:** ...
+   **Dampak kalau dibiarkan:** ...
+   **Seberapa sering halaman ini diakses:** (staf desa saja / staf +
+   masyarakat umum / jarang dipakai / dst)
+   **Rekomendasi saya kalau ada:** (opsional, boleh dikosongkan kalau
+   tidak yakin)
+   ```

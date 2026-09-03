@@ -1,6 +1,6 @@
 import { getProfile } from "@/src/lib/auth/getProfile";
 import { calculateEffectiveSlaStatus } from "@/src/lib/sla";
-import { createClient } from "@/src/lib/supabase/server";
+import { prisma } from "@/src/lib/prisma";
 
 const MAP_LIMIT = 200;
 
@@ -31,50 +31,58 @@ export async function getVillageSlaMonitoringData() {
     };
   }
 
-  const supabase = await createClient();
+  const reports = await prisma.report.findMany({
+    select: {
+      id: true,
+      reportNumber: true,
+      title: true,
+      status: true,
+      priority: true,
+      slaStatus: true,
+      verificationDueAt: true,
+      resolutionDueAt: true,
+      resolvedAt: true,
+      createdAt: true,
+      updatedAt: true,
+      category: { select: { name: true } },
+      dusun: { select: { name: true } },
+    },
+    orderBy: { updatedAt: "desc" },
+  });
 
-  const { data, error } = await supabase
-    .from("reports")
-    .select(
-      `
-      id,
-      report_number,
-      title,
-      status,
-      priority,
-      sla_status,
-      verification_due_at,
-      resolution_due_at,
-      resolved_at,
-      created_at,
-      updated_at,
-      category:categories(name),
-      hamlet:dusuns(name)
-    `
-    )
-    .order("updated_at", { ascending: false });
-
-  if (error) {
-    console.error("Failed to fetch village SLA data:", error.message);
+  const mappedReports = reports.map((report) => {
+    const createdAtIso = report.createdAt.toISOString();
+    const resolutionDueAtIso = report.resolutionDueAt?.toISOString() ?? null;
+    const resolvedAtIso = report.resolvedAt?.toISOString() ?? null;
 
     return {
-      totalReports: 0,
-      slaStats: [],
-      reports: [],
+      id: report.id,
+      report_number: report.reportNumber,
+      title: report.title,
+      status: report.status,
+      priority: report.priority,
+      sla_status: calculateEffectiveSlaStatus({
+        status: report.status,
+        created_at: createdAtIso,
+        resolution_due_at: resolutionDueAtIso,
+        resolved_at: resolvedAtIso,
+      }),
+      verification_due_at: report.verificationDueAt?.toISOString() ?? null,
+      resolution_due_at: resolutionDueAtIso,
+      resolved_at: resolvedAtIso,
+      created_at: createdAtIso,
+      updated_at: report.updatedAt.toISOString(),
+      category: report.category,
+      hamlet: report.dusun,
     };
-  }
-
-  const reports = (data ?? []).map((report) => ({
-    ...report,
-    sla_status: calculateEffectiveSlaStatus(report),
-  }));
+  });
 
   return {
-    totalReports: reports.length,
+    totalReports: mappedReports.length,
     slaStats: countByValueWithFallback(
-      reports.map((report) => report.sla_status)
+      mappedReports.map((report) => report.sla_status)
     ),
-    reports,
+    reports: mappedReports,
   };
 }
 
@@ -85,34 +93,35 @@ export async function getVillageHeatmapReports() {
     return [];
   }
 
-  const supabase = await createClient();
+  const reports = await prisma.report.findMany({
+    select: {
+      id: true,
+      reportNumber: true,
+      title: true,
+      status: true,
+      priority: true,
+      latitude: true,
+      longitude: true,
+      createdAt: true,
+      updatedAt: true,
+      category: { select: { name: true } },
+      dusun: { select: { name: true } },
+    },
+    orderBy: { updatedAt: "desc" },
+    take: MAP_LIMIT,
+  });
 
-  const { data, error } = await supabase
-    .from("reports")
-    .select(
-      `
-      id,
-      report_number,
-      title,
-      status,
-      priority,
-      latitude,
-      longitude,
-      created_at,
-      updated_at,
-      category:categories(name),
-      hamlet:dusuns(name)
-    `
-    )
-    .not("latitude", "is", null)
-    .not("longitude", "is", null)
-    .order("updated_at", { ascending: false })
-    .limit(MAP_LIMIT);
-
-  if (error) {
-    console.error("Failed to fetch heatmap reports:", error.message);
-    return [];
-  }
-
-  return data ?? [];
+  return reports.map((report) => ({
+    id: report.id,
+    report_number: report.reportNumber,
+    title: report.title,
+    status: report.status,
+    priority: report.priority,
+    latitude: Number(report.latitude),
+    longitude: Number(report.longitude),
+    created_at: report.createdAt.toISOString(),
+    updated_at: report.updatedAt.toISOString(),
+    category: report.category,
+    hamlet: report.dusun,
+  }));
 }

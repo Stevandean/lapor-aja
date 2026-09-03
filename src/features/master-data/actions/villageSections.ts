@@ -1,7 +1,7 @@
 "use server";
 
 import { revalidatePath } from "next/cache";
-import { createClient } from "@/src/lib/supabase/server";
+import { prisma } from "@/src/lib/prisma";
 import type { ActionState } from "@/src/types/action";
 import { requireAdmin } from "./shared";
 
@@ -26,29 +26,27 @@ export async function createVillageSection(
     ? code.toUpperCase().replace(/\s+/g, "_")
     : null;
 
-  const supabase = await createClient();
-
-  const { data: lastSection } = await supabase
-    .from("village_sections")
-    .select("sort_order")
-    .order("sort_order", { ascending: false })
-    .limit(1)
-    .maybeSingle();
-
-  const nextSortOrder = Number(lastSection?.sort_order || 0) + 1;
-
-  const { error } = await supabase.from("village_sections").insert({
-    name,
-    code: normalizedCode,
-    description: description || null,
-    sort_order: nextSortOrder,
-    is_active: true,
+  const lastSection = await prisma.villageSection.findFirst({
+    select: { sortOrder: true },
+    orderBy: { sortOrder: "desc" },
   });
 
-  if (error) {
+  const nextSortOrder = (lastSection?.sortOrder ?? 0) + 1;
+
+  try {
+    await prisma.villageSection.create({
+      data: {
+        name,
+        code: normalizedCode,
+        description: description || null,
+        sortOrder: nextSortOrder,
+        isActive: true,
+      },
+    });
+  } catch (error) {
     return {
       status: "error",
-      message: error.message,
+      message: error instanceof Error ? error.message : "Gagal membuat seksi desa.",
     };
   }
 
@@ -59,6 +57,7 @@ export async function createVillageSection(
     message: "Seksi desa berhasil dibuat.",
   };
 }
+
 export async function toggleVillageSectionStatus(
   _prevState: ActionState,
   formData: FormData
@@ -75,20 +74,15 @@ export async function toggleVillageSectionStatus(
     };
   }
 
-  const supabase = await createClient();
-
-  const { error } = await supabase
-    .from("village_sections")
-    .update({
-      is_active: !isActive,
-      updated_at: new Date().toISOString(),
-    })
-    .eq("id", sectionId);
-
-  if (error) {
+  try {
+    await prisma.villageSection.update({
+      where: { id: sectionId },
+      data: { isActive: !isActive },
+    });
+  } catch (error) {
     return {
       status: "error",
-      message: error.message,
+      message: error instanceof Error ? error.message : "Gagal mengubah status seksi desa.",
     };
   }
 
