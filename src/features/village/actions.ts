@@ -8,7 +8,6 @@ import { getProfile } from "@/src/lib/auth/getProfile";
 import { getDashboardRouteByRole, ROUTES } from "@/src/lib/constants/routes";
 import { prisma } from "@/src/lib/prisma";
 import type { ActionState } from "@/src/types/action";
-import { createAdminClient } from "@/src/lib/supabase/admin";
 import { recordSlaEvent } from "@/src/features/reports/slaEvents";
 import { notifyUsersInternal } from "@/src/features/reports/internalNotifications";
 
@@ -71,20 +70,11 @@ function revalidateBudgetReviewPaths(reportId?: string | null) {
 }
 
 async function hasReportProgressUpdates(reportId: string) {
-  const supabase = createAdminClient();
-  const { data, error } = await supabase
-    .from("report_progress_updates")
-    .select("id")
-    .eq("report_id", reportId)
-    .limit(1)
-    .maybeSingle();
+  const count = await prisma.reportProgressUpdate.count({
+    where: { reportId },
+  });
 
-  if (error) {
-    console.error("Failed to check report progress updates:", error.message);
-    return false;
-  }
-
-  return Boolean(data);
+  return count > 0;
 }
 
 function extendDueDateByPauseWindow(
@@ -377,21 +367,10 @@ export async function approveBudgetRequest(
     };
   }
 
-  const supabase = createAdminClient();
-  const { data: budgetRequest, error: requestError } = await supabase
-    .from("report_budget_requests")
-    .select("id, report_id, requested_by, status, created_at")
-    .eq("id", requestId)
-    .maybeSingle();
-
-  if (requestError) {
-    return {
-      status: "error",
-      message:
-        requestError.message ||
-        "Gagal membaca pengajuan anggaran. Pastikan migration peninjauan sudah dijalankan.",
-    };
-  }
+  const budgetRequest = await prisma.reportBudgetRequest.findUnique({
+    where: { id: requestId },
+    select: { id: true, reportId: true, requestedBy: true, status: true, createdAt: true },
+  });
 
   if (!budgetRequest) {
     return {
@@ -407,96 +386,83 @@ export async function approveBudgetRequest(
     };
   }
 
-  const now = new Date().toISOString();
-  const { data: updatedRequest, error: updateError } = await supabase
-    .from("report_budget_requests")
-    .update({
+  const now = new Date();
+  const { count: updatedCount } = await prisma.reportBudgetRequest.updateMany({
+    where: { id: requestId, status: "submitted" },
+    data: {
       status: "approved",
-      reviewed_by: reviewer.id,
-      reviewed_at: now,
-      review_note: reviewNote || null,
-      updated_at: now,
-    })
-    .eq("id", requestId)
-    .eq("status", "submitted")
-    .select("id")
-    .maybeSingle();
+      reviewedBy: reviewer.id,
+      reviewedAt: now,
+      reviewNote: reviewNote || null,
+    },
+  });
 
-  if (updateError || !updatedRequest) {
+  if (updatedCount === 0) {
     return {
       status: "error",
-      message:
-        updateError?.message ||
-        "Pengajuan anggaran sudah tidak tersedia untuk disetujui.",
+      message: "Pengajuan anggaran sudah tidak tersedia untuk disetujui.",
     };
   }
 
-  const { data: report, error: reportReadError } = await supabase
-    .from("reports")
-    .select("id, report_number, title, status, resolution_due_at")
-    .eq("id", budgetRequest.report_id)
-    .maybeSingle();
-
-  if (reportReadError) {
-    console.error("Failed to read report after budget approval:", reportReadError.message);
-  }
+  const report = await prisma.report.findUnique({
+    where: { id: budgetRequest.reportId },
+    select: { id: true, reportNumber: true, title: true, status: true, resolutionDueAt: true },
+  });
 
   if (report?.status === "waiting_budget") {
     const statusNote = reviewNote
       ? `Pengajuan anggaran disetujui: ${reviewNote}`
       : "Pengajuan anggaran disetujui.";
-    const nextReportStatus = (await hasReportProgressUpdates(budgetRequest.report_id))
+    const nextReportStatus = (await hasReportProgressUpdates(budgetRequest.reportId))
       ? "in_progress"
       : "handled_by_village";
     const nextResolutionDueAt = extendDueDateByPauseWindow(
-      report.resolution_due_at,
-      budgetRequest.created_at,
-      now
+      report.resolutionDueAt?.toISOString() ?? null,
+      budgetRequest.createdAt.toISOString(),
+      now.toISOString()
     );
-    const { error: reportUpdateError } = await supabase
-      .from("reports")
-      .update({
+    const { count: reportUpdatedCount } = await prisma.report.updateMany({
+      where: { id: budgetRequest.reportId, status: "waiting_budget" },
+      data: {
         status: nextReportStatus,
-        resolution_due_at: nextResolutionDueAt,
-        internal_handling_note: statusNote,
-        updated_at: now,
-      })
-      .eq("id", budgetRequest.report_id)
-      .eq("status", "waiting_budget");
+        resolutionDueAt: nextResolutionDueAt ? new Date(nextResolutionDueAt) : null,
+        internalHandlingNote: statusNote,
+      },
+    });
 
-    if (reportUpdateError) {
+    if (reportUpdatedCount === 0) {
       return {
         status: "error",
-        message: reportUpdateError.message,
+        message: "Laporan sudah tidak dalam status menunggu anggaran.",
       };
     }
 
     await createReportStatusLog({
-      reportId: budgetRequest.report_id,
+      reportId: budgetRequest.reportId,
       oldStatus: "waiting_budget",
       newStatus: nextReportStatus,
       note: statusNote,
     });
 
     await recordSlaEvent({
-      reportId: budgetRequest.report_id,
+      reportId: budgetRequest.reportId,
       eventType: "resumed_budget",
-      previousResolutionDueAt: report.resolution_due_at,
+      previousResolutionDueAt: report.resolutionDueAt?.toISOString() ?? null,
       newResolutionDueAt: nextResolutionDueAt,
       note: statusNote,
     });
   }
 
-  if (budgetRequest.requested_by && report) {
+  if (budgetRequest.requestedBy && report) {
     await notifyUsersInternal({
-      userIds: [budgetRequest.requested_by],
-      reportId: budgetRequest.report_id,
-      subject: `Anggaran disetujui ${report.report_number}`,
-      message: `Pengajuan anggaran untuk laporan ${report.report_number} (${report.title}) telah disetujui.${reviewNote ? ` Catatan: ${reviewNote}` : ""}`,
+      userIds: [budgetRequest.requestedBy],
+      reportId: budgetRequest.reportId,
+      subject: `Anggaran disetujui ${report.reportNumber}`,
+      message: `Pengajuan anggaran untuk laporan ${report.reportNumber} (${report.title}) telah disetujui.${reviewNote ? ` Catatan: ${reviewNote}` : ""}`,
     });
   }
 
-  revalidateBudgetReviewPaths(budgetRequest.report_id);
+  revalidateBudgetReviewPaths(budgetRequest.reportId);
 
   return {
     status: "success",
@@ -526,21 +492,10 @@ export async function rejectBudgetRequest(
     };
   }
 
-  const supabase = createAdminClient();
-  const { data: budgetRequest, error: requestError } = await supabase
-    .from("report_budget_requests")
-    .select("id, report_id, requested_by, status, created_at")
-    .eq("id", requestId)
-    .maybeSingle();
-
-  if (requestError) {
-    return {
-      status: "error",
-      message:
-        requestError.message ||
-        "Gagal membaca pengajuan anggaran. Pastikan migration peninjauan sudah dijalankan.",
-    };
-  }
+  const budgetRequest = await prisma.reportBudgetRequest.findUnique({
+    where: { id: requestId },
+    select: { id: true, reportId: true, requestedBy: true, status: true, createdAt: true },
+  });
 
   if (!budgetRequest) {
     return {
@@ -556,90 +511,77 @@ export async function rejectBudgetRequest(
     };
   }
 
-  const now = new Date().toISOString();
-  const { data: updatedRequest, error: updateError } = await supabase
-    .from("report_budget_requests")
-    .update({
+  const now = new Date();
+  const { count: updatedCount } = await prisma.reportBudgetRequest.updateMany({
+    where: { id: requestId, status: "submitted" },
+    data: {
       status: "rejected",
-      reviewed_by: reviewer.id,
-      reviewed_at: now,
-      review_note: reviewNote,
-      updated_at: now,
-    })
-    .eq("id", requestId)
-    .eq("status", "submitted")
-    .select("id")
-    .maybeSingle();
+      reviewedBy: reviewer.id,
+      reviewedAt: now,
+      reviewNote,
+    },
+  });
 
-  if (updateError || !updatedRequest) {
+  if (updatedCount === 0) {
     return {
       status: "error",
-      message:
-        updateError?.message ||
-        "Pengajuan anggaran sudah tidak tersedia untuk ditolak.",
+      message: "Pengajuan anggaran sudah tidak tersedia untuk ditolak.",
     };
   }
 
-  const { data: report, error: reportReadError } = await supabase
-    .from("reports")
-    .select("id, report_number, title, status, resolution_due_at")
-    .eq("id", budgetRequest.report_id)
-    .maybeSingle();
-
-  if (reportReadError) {
-    console.error("Failed to read report after budget rejection:", reportReadError.message);
-  }
+  const report = await prisma.report.findUnique({
+    where: { id: budgetRequest.reportId },
+    select: { id: true, reportNumber: true, title: true, status: true, resolutionDueAt: true },
+  });
 
   if (report?.status === "waiting_budget") {
     const nextResolutionDueAt = extendDueDateByPauseWindow(
-      report.resolution_due_at,
-      budgetRequest.created_at,
-      now
+      report.resolutionDueAt?.toISOString() ?? null,
+      budgetRequest.createdAt.toISOString(),
+      now.toISOString()
     );
-    const { error: reportUpdateError } = await supabase
-      .from("reports")
-      .update({
+    const { count: reportUpdatedCount } = await prisma.report.updateMany({
+      where: { id: budgetRequest.reportId, status: "waiting_budget" },
+      data: {
         status: "handled_by_village",
-        resolution_due_at: nextResolutionDueAt,
-        internal_handling_note: reviewNote,
-        updated_at: now,
-      })
-      .eq("id", budgetRequest.report_id)
-      .eq("status", "waiting_budget");
+        resolutionDueAt: nextResolutionDueAt ? new Date(nextResolutionDueAt) : null,
+        internalHandlingNote: reviewNote,
+      },
+    });
 
-    if (reportUpdateError) {
+    if (reportUpdatedCount === 0) {
       return {
         status: "error",
-        message: reportUpdateError.message,
+        message: "Laporan sudah tidak dalam status menunggu anggaran.",
       };
     }
 
     await createReportStatusLog({
-      reportId: budgetRequest.report_id,
+      reportId: budgetRequest.reportId,
       oldStatus: "waiting_budget",
       newStatus: "handled_by_village",
       note: `Pengajuan anggaran ditolak: ${reviewNote}`,
     });
 
     await recordSlaEvent({
-      reportId: budgetRequest.report_id,
+      reportId: budgetRequest.reportId,
       eventType: "resumed_budget",
-      previousResolutionDueAt: report.resolution_due_at,
+      previousResolutionDueAt: report.resolutionDueAt?.toISOString() ?? null,
       newResolutionDueAt: nextResolutionDueAt,
       note: `Pengajuan anggaran ditolak: ${reviewNote}`,
     });
   }
 
-  if (budgetRequest.requested_by && report) {
+  if (budgetRequest.requestedBy && report) {
     await notifyUsersInternal({
-      userIds: [budgetRequest.requested_by],
-      reportId: budgetRequest.report_id,
-      subject: `Anggaran ditolak ${report.report_number}`,
-      message: `Pengajuan anggaran untuk laporan ${report.report_number} (${report.title}) ditolak. Catatan: ${reviewNote}`,
+      userIds: [budgetRequest.requestedBy],
+      reportId: budgetRequest.reportId,
+      subject: `Anggaran ditolak ${report.reportNumber}`,
+      message: `Pengajuan anggaran untuk laporan ${report.reportNumber} (${report.title}) ditolak. Catatan: ${reviewNote}`,
     });
   }
 
-  revalidateBudgetReviewPaths(budgetRequest.report_id);
+  revalidateBudgetReviewPaths(budgetRequest.reportId);
 
   return {
     status: "success",

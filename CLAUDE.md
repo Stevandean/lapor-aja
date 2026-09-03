@@ -506,3 +506,10 @@ sudah full Prisma):
    dengan smoke test nyata (seed 1 user uji, jalankan dev server, coba akses
    halaman/alur terkait sungguhan lewat curl atau browser, baru bersihkan
    data ujinya) — bukan cuma percaya build lolos.
+6. **Setiap menyelesaikan satu tugas dari daftar bernomor, sertakan
+   "Penjelasan singkat" 2-4 kalimat berbahasa sederhana** (bukan jargon
+   teknis berat) yang menjawab: apa yang diubah, KENAPA itu perlu, dan APA
+   DAMPAKNYA kalau tidak diperbaiki. Alasan: pengguna adalah mahasiswa yang
+   akan sidang TA ini — dia harus benar-benar paham sistemnya sendiri untuk
+   bisa menjawab pertanyaan penguji, bukan cuma menerima laporan teknis
+   tanpa konteks yang dia sendiri tidak bisa jelaskan ulang.

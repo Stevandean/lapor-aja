@@ -1,30 +1,6 @@
 import { getProfile } from "@/src/lib/auth/getProfile";
-import { createClient } from "@/src/lib/supabase/server";
-
-async function getReportCount(filter?: {
-  column: string;
-  value: string;
-}) {
-  const supabase = await createClient();
-
-  let query = supabase.from("reports").select("*", {
-    count: "exact",
-    head: true,
-  });
-
-  if (filter) {
-    query = query.eq(filter.column, filter.value);
-  }
-
-  const { count, error } = await query;
-
-  if (error) {
-    console.error("Failed to count village reports:", error.message);
-    return 0;
-  }
-
-  return count ?? 0;
-}
+import { prisma } from "@/src/lib/prisma";
+import type { ReportStatus } from "@prisma/client";
 
 export async function getVillageDashboardData() {
   const profile = await getProfile();
@@ -43,7 +19,8 @@ export async function getVillageDashboardData() {
     };
   }
 
-  const supabase = await createClient();
+  const countByStatus = async (status?: ReportStatus) =>
+    prisma.report.count({ where: status ? { status } : undefined });
 
   const [
     totalReports,
@@ -52,51 +29,30 @@ export async function getVillageDashboardData() {
     inProgressReports,
     resolvedReports,
     archivedReports,
+    recentReports,
   ] = await Promise.all([
-    getReportCount(),
-    getReportCount({
-      column: "status",
-      value: "pending",
-    }),
-    getReportCount({
-      column: "status",
-      value: "need_verification",
-    }),
-    getReportCount({
-      column: "status",
-      value: "in_progress",
-    }),
-    getReportCount({
-      column: "status",
-      value: "resolved",
-    }),
-    getReportCount({
-      column: "status",
-      value: "archived",
+    countByStatus(),
+    countByStatus("pending"),
+    countByStatus("need_verification"),
+    countByStatus("in_progress"),
+    countByStatus("resolved"),
+    countByStatus("archived"),
+    prisma.report.findMany({
+      select: {
+        id: true,
+        reportNumber: true,
+        title: true,
+        status: true,
+        priority: true,
+        createdAt: true,
+        updatedAt: true,
+        category: { select: { name: true } },
+        dusun: { select: { name: true } },
+      },
+      orderBy: { updatedAt: "desc" },
+      take: 6,
     }),
   ]);
-
-  const { data: recentReports, error } = await supabase
-    .from("reports")
-    .select(
-      `
-      id,
-      report_number,
-      title,
-      status,
-      priority,
-      created_at,
-      updated_at,
-      category:categories(name),
-      hamlet:dusuns(name)
-    `
-    )
-    .order("updated_at", { ascending: false })
-    .limit(6);
-
-  if (error) {
-    console.error("Failed to fetch recent village reports:", error.message);
-  }
 
   return {
     stats: {
@@ -107,18 +63,18 @@ export async function getVillageDashboardData() {
       resolvedReports,
       archivedReports,
     },
-    recentReports: recentReports ?? [],
+    recentReports: recentReports.map((report) => ({
+      id: report.id,
+      report_number: report.reportNumber,
+      title: report.title,
+      status: report.status,
+      priority: report.priority,
+      created_at: report.createdAt.toISOString(),
+      updated_at: report.updatedAt.toISOString(),
+      category: report.category,
+      hamlet: report.dusun,
+    })),
   };
-}
-
-type RelationName = {
-  name: string;
-};
-
-function getRelationName(relation: RelationName[] | RelationName | null) {
-  if (!relation) return "Uncategorized";
-  if (Array.isArray(relation)) return relation[0]?.name ?? "Uncategorized";
-  return relation.name ?? "Uncategorized";
 }
 
 function countByValue(values: string[]) {
@@ -149,43 +105,25 @@ export async function getVillageAnalyticsData() {
     };
   }
 
-  const supabase = await createClient();
-
-  const { data, error } = await supabase
-    .from("reports")
-    .select(
-      `
-      id,
-      status,
-      priority,
-      category:categories(name),
-      hamlet:dusuns(name)
-    `
-    );
-
-  if (error) {
-    console.error("Failed to fetch village analytics:", error.message);
-
-    return {
-      totalReports: 0,
-      statusStats: [],
-      priorityStats: [],
-      categoryStats: [],
-      hamletStats: [],
-    };
-  }
-
-  const reports = data ?? [];
+  const reports = await prisma.report.findMany({
+    select: {
+      id: true,
+      status: true,
+      priority: true,
+      category: { select: { name: true } },
+      dusun: { select: { name: true } },
+    },
+  });
 
   return {
     totalReports: reports.length,
     statusStats: countByValue(reports.map((report) => report.status)),
     priorityStats: countByValue(reports.map((report) => report.priority)),
     categoryStats: countByValue(
-      reports.map((report) => getRelationName(report.category))
+      reports.map((report) => report.category?.name ?? "Uncategorized")
     ),
     hamletStats: countByValue(
-      reports.map((report) => getRelationName(report.hamlet))
+      reports.map((report) => report.dusun?.name ?? "Uncategorized")
     ),
   };
 }

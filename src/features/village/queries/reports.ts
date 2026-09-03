@@ -1,19 +1,7 @@
 import { getProfile } from "@/src/lib/auth/getProfile";
-import { createAdminClient } from "@/src/lib/supabase/admin";
-import { createClient } from "@/src/lib/supabase/server";
-import type { SupabaseClient } from "@supabase/supabase-js";
-import { isMissingDatabaseRelationError, uniqueValues } from "./shared";
+import { prisma } from "@/src/lib/prisma";
 
 const LIST_LIMIT = 50;
-
-type ReportSlaEventRow = {
-  id: string;
-  event_type: string;
-  previous_resolution_due_at: string | null;
-  new_resolution_due_at: string | null;
-  note: string | null;
-  created_at: string;
-};
 
 type ReportRelationSummary = {
   duplicateAsSource: number;
@@ -31,6 +19,31 @@ function emptyRelationSummary(): ReportRelationSummary {
   };
 }
 
+function toDisplayUrl(filePath: string | null | undefined) {
+  return filePath && filePath.startsWith("/") ? filePath : null;
+}
+
+function uniqueValues(values: string[]) {
+  return Array.from(new Set(values));
+}
+
+type PhotoRow = {
+  id: string;
+  filePath: string;
+  photoUrl: string;
+  createdAt: Date;
+};
+
+function mapPhotosWithSignedUrls(photos: PhotoRow[]) {
+  return photos.map((photo) => ({
+    id: photo.id,
+    file_path: photo.filePath,
+    photo_url: photo.photoUrl,
+    created_at: photo.createdAt.toISOString(),
+    signed_url: toDisplayUrl(photo.filePath),
+  }));
+}
+
 async function getRelationSummaryByReportId(reportIds: string[]) {
   const summaryByReportId = new Map<string, ReportRelationSummary>();
 
@@ -42,56 +55,41 @@ async function getRelationSummaryByReportId(reportIds: string[]) {
     return summaryByReportId;
   }
 
-  const supabase = createAdminClient();
-  const [{ data: outgoing, error: outgoingError }, { data: incoming, error: incomingError }] =
-    await Promise.all([
-      supabase
-        .from("report_relations")
-        .select("source_report_id, relation_type")
-        .in("source_report_id", reportIds),
-      supabase
-        .from("report_relations")
-        .select("target_report_id, relation_type")
-        .in("target_report_id", reportIds),
-    ]);
+  const [outgoing, incoming] = await Promise.all([
+    prisma.reportRelation.findMany({
+      where: { sourceReportId: { in: reportIds } },
+      select: { sourceReportId: true, relationType: true },
+    }),
+    prisma.reportRelation.findMany({
+      where: { targetReportId: { in: reportIds } },
+      select: { targetReportId: true, relationType: true },
+    }),
+  ]);
 
-  for (const relationError of [outgoingError, incomingError]) {
-    if (
-      relationError &&
-      !isMissingDatabaseRelationError(relationError.message)
-    ) {
-      console.error("Failed to fetch report relation summary:", relationError.message);
-    }
-  }
-
-  if (outgoingError || incomingError) {
-    return summaryByReportId;
-  }
-
-  for (const relation of outgoing ?? []) {
-    const summary = summaryByReportId.get(relation.source_report_id);
+  for (const relation of outgoing) {
+    const summary = summaryByReportId.get(relation.sourceReportId);
 
     if (!summary) continue;
 
-    if (relation.relation_type === "duplicate") {
+    if (relation.relationType === "duplicate") {
       summary.duplicateAsSource += 1;
     }
 
-    if (relation.relation_type === "recurrence") {
+    if (relation.relationType === "recurrence") {
       summary.recurrenceAsSource += 1;
     }
   }
 
-  for (const relation of incoming ?? []) {
-    const summary = summaryByReportId.get(relation.target_report_id);
+  for (const relation of incoming) {
+    const summary = summaryByReportId.get(relation.targetReportId);
 
     if (!summary) continue;
 
-    if (relation.relation_type === "duplicate") {
+    if (relation.relationType === "duplicate") {
       summary.duplicateAsTarget += 1;
     }
 
-    if (relation.relation_type === "recurrence") {
+    if (relation.relationType === "recurrence") {
       summary.recurrenceAsTarget += 1;
     }
   }
@@ -106,38 +104,46 @@ export async function getVillageArchivedReports() {
     return [];
   }
 
-  const supabase = await createClient();
+  const reports = await prisma.report.findMany({
+    where: { status: "archived" },
+    select: {
+      id: true,
+      reportNumber: true,
+      title: true,
+      status: true,
+      priority: true,
+      assetStatus: true,
+      authorityLevel: true,
+      followUpType: true,
+      resolvedAt: true,
+      updatedAt: true,
+      createdAt: true,
+      category: { select: { name: true } },
+      dusun: { select: { name: true } },
+      reporter: { select: { fullName: true, email: true } },
+    },
+    orderBy: { updatedAt: "desc" },
+    take: LIST_LIMIT,
+  });
 
-  const { data, error } = await supabase
-    .from("reports")
-    .select(
-      `
-      id,
-      report_number,
-      title,
-      status,
-      priority,
-      asset_status,
-      authority_level,
-      follow_up_type,
-      resolved_at,
-      updated_at,
-      created_at,
-      category:categories(name),
-      hamlet:dusuns(name),
-      reporter:profiles!reports_reporter_id_fkey(full_name, email)
-    `
-    )
-    .eq("status", "archived")
-    .order("updated_at", { ascending: false })
-    .limit(LIST_LIMIT)
-
-  if (error) {
-    console.error("Failed to fetch village archived reports:", error.message);
-    return [];
-  }
-
-  return data ?? [];
+  return reports.map((report) => ({
+    id: report.id,
+    report_number: report.reportNumber,
+    title: report.title,
+    status: report.status,
+    priority: report.priority,
+    asset_status: report.assetStatus,
+    authority_level: report.authorityLevel,
+    follow_up_type: report.followUpType,
+    resolved_at: report.resolvedAt?.toISOString() ?? null,
+    updated_at: report.updatedAt.toISOString(),
+    created_at: report.createdAt.toISOString(),
+    category: report.category,
+    hamlet: report.dusun,
+    reporter: report.reporter
+      ? { full_name: report.reporter.fullName, email: report.reporter.email }
+      : null,
+  }));
 }
 
 export async function getVillageArchivedReportDetail(reportId: string) {
@@ -147,145 +153,129 @@ export async function getVillageArchivedReportDetail(reportId: string) {
     return null;
   }
 
-  const supabase = await createClient();
+  const report = await prisma.report.findFirst({
+    where: { id: reportId, status: "archived" },
+    select: {
+      id: true,
+      reportNumber: true,
+      title: true,
+      description: true,
+      status: true,
+      priority: true,
+      assetStatus: true,
+      authorityLevel: true,
+      followUpType: true,
+      adminNote: true,
+      rejectionReason: true,
+      latitude: true,
+      longitude: true,
+      autoAddress: true,
+      manualAddress: true,
+      verificationDueAt: true,
+      resolutionDueAt: true,
+      resolvedAt: true,
+      createdAt: true,
+      updatedAt: true,
+      category: { select: { name: true } },
+      dusun: { select: { name: true } },
+      reporter: { select: { fullName: true, email: true, phoneNumber: true } },
+    },
+  });
 
-  const { data: report, error } = await supabase
-    .from("reports")
-    .select(
-      `
-      id,
-      report_number,
-      title,
-      description,
-      status,
-      priority,
-      asset_status,
-      authority_level,
-      follow_up_type,
-      admin_note,
-      rejection_reason,
-      latitude,
-      longitude,
-      auto_address,
-      manual_address,
-      verification_due_at,
-      resolution_due_at,
-      resolved_at,
-      created_at,
-      updated_at,
-      category:categories(name),
-      hamlet:dusuns(name),
-      reporter:profiles!reports_reporter_id_fkey(full_name, email, phone_number)
-    `
-    )
-    .eq("id", reportId)
-    .eq("status", "archived")
-    .maybeSingle();
-
-  if (error || !report) {
-    console.error("Failed to fetch archived report detail:", error?.message);
+  if (!report) {
     return null;
   }
 
-  const { data: reportPhotos } = await supabase
-    .from("report_photos")
-    .select("id, file_path, photo_url, created_at")
-    .eq("report_id", reportId)
-    .order("created_at", { ascending: true });
+  const reportPhotos = await prisma.reportPhoto.findMany({
+    where: { reportId },
+    select: { id: true, filePath: true, photoUrl: true, createdAt: true },
+    orderBy: { createdAt: "asc" },
+  });
 
-  const signedReportPhotos = await Promise.all(
-    (reportPhotos ?? []).map(async (photo) => {
-      const path = photo.file_path || photo.photo_url;
-
-      if (!path) {
-        return {
-          ...photo,
-          signed_url: null,
-        };
-      }
-
-      const { data } = await supabase.storage
-        .from("report-photos")
-        .createSignedUrl(path, 60 * 60);
-
-      return {
-        ...photo,
-        signed_url: data?.signedUrl ?? null,
-      };
-    })
-  );
-
-  const { data: verification } = await supabase
-    .from("report_verifications")
-    .select("id, verified_by, is_valid, verification_note, created_at")
-    .eq("report_id", reportId)
-    .order("created_at", { ascending: false })
-    .limit(1)
-    .maybeSingle();
+  const verification = await prisma.reportVerification.findFirst({
+    where: { reportId },
+    select: {
+      id: true,
+      verifiedBy: true,
+      isValid: true,
+      verificationNote: true,
+      createdAt: true,
+    },
+    orderBy: { createdAt: "desc" },
+  });
 
   let verificationData = null;
 
   if (verification) {
-    const { data: verifier } = await supabase
-      .from("profiles")
-      .select("full_name, email")
-      .eq("id", verification.verified_by)
-      .maybeSingle();
-
-    const { data: verificationPhotos } = await supabase
-      .from("verification_photos")
-      .select("id, file_path, photo_url, created_at")
-      .eq("verification_id", verification.id)
-      .order("created_at", { ascending: true });
-
-    const signedVerificationPhotos = await Promise.all(
-      (verificationPhotos ?? []).map(async (photo) => {
-        const path = photo.file_path || photo.photo_url;
-
-        if (!path) {
-          return {
-            ...photo,
-            signed_url: null,
-          };
-        }
-
-        const { data } = await supabase.storage
-          .from("verification-photos")
-          .createSignedUrl(path, 60 * 60);
-
-        return {
-          ...photo,
-          signed_url: data?.signedUrl ?? null,
-        };
-      })
-    );
+    const [verifier, verificationPhotos] = await Promise.all([
+      prisma.profile.findUnique({
+        where: { id: verification.verifiedBy },
+        select: { fullName: true, email: true },
+      }),
+      prisma.verificationPhoto.findMany({
+        where: { verificationId: verification.id },
+        select: { id: true, filePath: true, photoUrl: true, createdAt: true },
+        orderBy: { createdAt: "asc" },
+      }),
+    ]);
 
     verificationData = {
-      ...verification,
-      verifier,
-      photos: signedVerificationPhotos,
+      id: verification.id,
+      is_valid: verification.isValid,
+      verification_note: verification.verificationNote,
+      created_at: verification.createdAt.toISOString(),
+      verifier: verifier
+        ? { full_name: verifier.fullName, email: verifier.email }
+        : null,
+      photos: mapPhotosWithSignedUrls(verificationPhotos),
     };
   }
 
-  const { data: statusLogs } = await supabase
-  .from("report_status_logs")
-  .select(
-    `
-    id,
-    old_status,
-    new_status,
-    note,
-    created_at
-  `
-  )
-  .eq("report_id", reportId)
-  .order("created_at", { ascending: true });
+  const statusLogs = await prisma.reportStatusLog.findMany({
+    where: { reportId },
+    select: { id: true, oldStatus: true, newStatus: true, note: true, createdAt: true },
+    orderBy: { createdAt: "asc" },
+  });
 
   return {
-    ...report,
-    report_photos: signedReportPhotos,
+    id: report.id,
+    report_number: report.reportNumber,
+    title: report.title,
+    description: report.description,
+    status: report.status,
+    priority: report.priority,
+    asset_status: report.assetStatus,
+    authority_level: report.authorityLevel,
+    follow_up_type: report.followUpType,
+    admin_note: report.adminNote,
+    rejection_reason: report.rejectionReason,
+    latitude: Number(report.latitude),
+    longitude: Number(report.longitude),
+    auto_address: report.autoAddress,
+    manual_address: report.manualAddress,
+    verification_due_at: report.verificationDueAt?.toISOString() ?? null,
+    resolution_due_at: report.resolutionDueAt?.toISOString() ?? null,
+    resolved_at: report.resolvedAt?.toISOString() ?? null,
+    created_at: report.createdAt.toISOString(),
+    updated_at: report.updatedAt.toISOString(),
+    category: report.category,
+    hamlet: report.dusun,
+    reporter: report.reporter
+      ? {
+          full_name: report.reporter.fullName,
+          email: report.reporter.email,
+          phone_number: report.reporter.phoneNumber,
+        }
+      : null,
+    report_photos: mapPhotosWithSignedUrls(reportPhotos),
     verification: verificationData,
-    status_logs: statusLogs ?? [],
+    status_logs: statusLogs.map((log) => ({
+      id: log.id,
+      old_status: log.oldStatus,
+      new_status: log.newStatus,
+      note: log.note,
+      created_at: log.createdAt.toISOString(),
+    })),
   };
 }
 
@@ -307,67 +297,60 @@ export async function getVillageReportsData() {
     };
   }
 
-  const supabase = createAdminClient();
-
-  const [{ data: reports, error }, { data: sections }] = await Promise.all([
-    supabase
-      .from("reports")
-      .select(
-        `
-        id,
-        report_number,
-        title,
-        status,
-        priority,
-        asset_status,
-        authority_level,
-        follow_up_type,
-        assigned_section_id,
-        created_at,
-        updated_at,
-        resolved_at,
-        category:categories(name),
-        hamlet:dusuns(name),
-        reporter:profiles!reports_reporter_id_fkey(full_name, email)
-        `
-      )
-      .order("updated_at", { ascending: false })
-      .limit(200),
-    supabase
-      .from("village_sections")
-      .select("id, name")
-      .eq("is_active", true)
-      .order("sort_order", { ascending: true })
-      .order("name", { ascending: true }),
+  const [reports, sections] = await Promise.all([
+    prisma.report.findMany({
+      select: {
+        id: true,
+        reportNumber: true,
+        title: true,
+        status: true,
+        priority: true,
+        assetStatus: true,
+        authorityLevel: true,
+        followUpType: true,
+        assignedSectionId: true,
+        createdAt: true,
+        updatedAt: true,
+        resolvedAt: true,
+        category: { select: { name: true } },
+        dusun: { select: { name: true } },
+        reporter: { select: { fullName: true, email: true } },
+      },
+      orderBy: { updatedAt: "desc" },
+      take: 200,
+    }),
+    prisma.villageSection.findMany({
+      where: { isActive: true },
+      select: { id: true, name: true },
+      orderBy: [{ sortOrder: "asc" }, { name: "asc" }],
+    }),
   ]);
 
-  if (error) {
-    console.error("Failed to fetch village reports:", error.message);
-
-    return {
-      stats: {
-        totalReports: 0,
-        activeReports: 0,
-        waitingBudgetReports: 0,
-        villageHandledReports: 0,
-        forwardedReports: 0,
-        resolvedReports: 0,
-      },
-      reports: [],
-      sections: sections ?? [],
-    };
-  }
-
-  const sectionById = new Map(
-    (sections ?? []).map((section) => [section.id, section])
-  );
+  const sectionById = new Map(sections.map((section) => [section.id, section]));
   const relationSummaryByReportId = await getRelationSummaryByReportId(
-    (reports ?? []).map((report) => report.id)
+    reports.map((report) => report.id)
   );
-  const reportRows = (reports ?? []).map((report) => ({
-    ...report,
-    section: report.assigned_section_id
-      ? sectionById.get(report.assigned_section_id) ?? null
+
+  const reportRows = reports.map((report) => ({
+    id: report.id,
+    report_number: report.reportNumber,
+    title: report.title,
+    status: report.status,
+    priority: report.priority,
+    asset_status: report.assetStatus,
+    authority_level: report.authorityLevel,
+    follow_up_type: report.followUpType,
+    assigned_section_id: report.assignedSectionId,
+    created_at: report.createdAt.toISOString(),
+    updated_at: report.updatedAt.toISOString(),
+    resolved_at: report.resolvedAt?.toISOString() ?? null,
+    category: report.category,
+    hamlet: report.dusun,
+    reporter: report.reporter
+      ? { full_name: report.reporter.fullName, email: report.reporter.email }
+      : null,
+    section: report.assignedSectionId
+      ? sectionById.get(report.assignedSectionId) ?? null
       : null,
     relation_summary:
       relationSummaryByReportId.get(report.id) ?? emptyRelationSummary(),
@@ -406,7 +389,7 @@ export async function getVillageReportsData() {
       ).length,
     },
     reports: reportRows,
-    sections: sections ?? [],
+    sections,
   };
 }
 
@@ -417,380 +400,359 @@ export async function getVillageReportMonitoringDetail(reportId: string) {
     return null;
   }
 
-  const supabase = createAdminClient();
+  const report = await prisma.report.findUnique({
+    where: { id: reportId },
+    select: {
+      id: true,
+      reportNumber: true,
+      title: true,
+      description: true,
+      status: true,
+      priority: true,
+      assetStatus: true,
+      authorityLevel: true,
+      followUpType: true,
+      assignedSectionId: true,
+      adminNote: true,
+      internalHandlingNote: true,
+      rejectionReason: true,
+      latitude: true,
+      longitude: true,
+      autoAddress: true,
+      manualAddress: true,
+      verificationDueAt: true,
+      resolutionDueAt: true,
+      resolvedAt: true,
+      createdAt: true,
+      updatedAt: true,
+      category: { select: { name: true } },
+      dusun: { select: { name: true } },
+      reporter: { select: { fullName: true, email: true, phoneNumber: true } },
+      agency: {
+        select: {
+          name: true,
+          description: true,
+          contactPerson: true,
+          phone: true,
+          email: true,
+          address: true,
+        },
+      },
+      assignedSection: { select: { id: true, name: true } },
+    },
+  });
 
-  const { data: report, error } = await supabase
-    .from("reports")
-    .select(
-      `
-      id,
-      report_number,
-      title,
-      description,
-      status,
-      priority,
-      asset_status,
-      authority_level,
-      follow_up_type,
-      assigned_section_id,
-      admin_note,
-      internal_handling_note,
-      rejection_reason,
-      latitude,
-      longitude,
-      auto_address,
-      manual_address,
-      verification_due_at,
-      resolution_due_at,
-      resolved_at,
-      created_at,
-      updated_at,
-      category:categories(name),
-      hamlet:dusuns(name),
-      reporter:profiles!reports_reporter_id_fkey(full_name, email, phone_number),
-      agency:agencies!reports_agency_id_fkey(name, description, contact_person, phone, email, address)
-      `
-    )
-    .eq("id", reportId)
-    .maybeSingle();
-
-  if (error || !report) {
-    console.error("Failed to fetch village report detail:", error?.message);
+  if (!report) {
     return null;
   }
 
   const [
-    { data: section },
-    { data: reportPhotos },
-    { data: statusLogs },
-    { data: verification },
-    { data: progressUpdates, error: progressUpdatesError },
-    { data: budgetRequests, error: budgetRequestsError },
-    { data: slaEvents, error: slaEventsError },
+    reportPhotos,
+    statusLogs,
+    verification,
+    progressUpdates,
+    budgetRequests,
+    slaEvents,
   ] = await Promise.all([
-    report.assigned_section_id
-      ? supabase
-          .from("village_sections")
-          .select("id, name")
-          .eq("id", report.assigned_section_id)
-          .maybeSingle()
-      : Promise.resolve({ data: null, error: null }),
-    supabase
-      .from("report_photos")
-      .select("id, file_path, photo_url, created_at")
-      .eq("report_id", reportId)
-      .order("created_at", { ascending: true }),
-    supabase
-      .from("report_status_logs")
-      .select("id, old_status, new_status, note, created_at")
-      .eq("report_id", reportId)
-      .order("created_at", { ascending: true }),
-    supabase
-      .from("report_verifications")
-      .select("id, verified_by, is_valid, verification_note, created_at")
-      .eq("report_id", reportId)
-      .order("created_at", { ascending: false })
-      .limit(1)
-      .maybeSingle(),
-    supabase
-      .from("report_progress_updates")
-      .select(
-        `
-        id,
-        progress_title,
-        progress_note,
-        progress_status,
-        created_by,
-        created_at
-        `
-      )
-      .eq("report_id", reportId)
-      .order("created_at", { ascending: false }),
-    supabase
-      .from("report_budget_requests")
-      .select(
-        `
-        id,
-        summary_note,
-        total_estimated_budget,
-        requested_by,
-        section_id,
-        status,
-        reviewed_by,
-        reviewed_at,
-        review_note,
-        created_at,
-        updated_at
-        `
-      )
-      .eq("report_id", reportId)
-      .order("created_at", { ascending: false }),
-    supabase
-      .from("report_sla_events")
-      .select(
-        `
-        id,
-        event_type,
-        previous_resolution_due_at,
-        new_resolution_due_at,
-        note,
-        created_at
-        `
-      )
-      .eq("report_id", reportId)
-      .order("created_at", { ascending: true }),
+    prisma.reportPhoto.findMany({
+      where: { reportId },
+      select: { id: true, filePath: true, photoUrl: true, createdAt: true },
+      orderBy: { createdAt: "asc" },
+    }),
+    prisma.reportStatusLog.findMany({
+      where: { reportId },
+      select: { id: true, oldStatus: true, newStatus: true, note: true, createdAt: true },
+      orderBy: { createdAt: "asc" },
+    }),
+    prisma.reportVerification.findFirst({
+      where: { reportId },
+      select: {
+        id: true,
+        verifiedBy: true,
+        isValid: true,
+        verificationNote: true,
+        createdAt: true,
+      },
+      orderBy: { createdAt: "desc" },
+    }),
+    prisma.reportProgressUpdate.findMany({
+      where: { reportId },
+      select: {
+        id: true,
+        progressTitle: true,
+        progressNote: true,
+        progressStatus: true,
+        createdBy: true,
+        createdAt: true,
+      },
+      orderBy: { createdAt: "desc" },
+    }),
+    prisma.reportBudgetRequest.findMany({
+      where: { reportId },
+      select: {
+        id: true,
+        summaryNote: true,
+        totalEstimatedBudget: true,
+        requestedBy: true,
+        sectionId: true,
+        status: true,
+        reviewedBy: true,
+        reviewedAt: true,
+        reviewNote: true,
+        createdAt: true,
+        updatedAt: true,
+      },
+      orderBy: { createdAt: "desc" },
+    }),
+    prisma.reportSlaEvent.findMany({
+      where: { reportId },
+      select: {
+        id: true,
+        eventType: true,
+        previousResolutionDueAt: true,
+        newResolutionDueAt: true,
+        note: true,
+        createdAt: true,
+      },
+      orderBy: { createdAt: "asc" },
+    }),
   ]);
 
-  if (
-    progressUpdatesError &&
-    !isMissingDatabaseRelationError(progressUpdatesError.message)
-  ) {
-    console.error(
-      "Failed to fetch village report progress updates:",
-      progressUpdatesError.message
-    );
-  }
-
-  if (
-    budgetRequestsError &&
-    !isMissingDatabaseRelationError(budgetRequestsError.message)
-  ) {
-    console.error(
-      "Failed to fetch village report budget requests:",
-      budgetRequestsError.message
-    );
-  }
-
-  const slaEventsSchemaReady =
-    !slaEventsError || !isMissingDatabaseRelationError(slaEventsError.message);
-
-  if (slaEventsError && slaEventsSchemaReady) {
-    console.error(
-      "Failed to fetch village report SLA events:",
-      slaEventsError.message
-    );
-  }
-
-  const signedReportPhotos = await createSignedPhotoUrls(
-    reportPhotos ?? [],
-    "report-photos",
-    supabase
-  );
+  const signedReportPhotos = mapPhotosWithSignedUrls(reportPhotos);
 
   let verificationData = null;
 
   if (verification) {
-    const [{ data: verifier }, { data: verificationPhotos }] = await Promise.all([
-      verification.verified_by
-        ? supabase
-            .from("profiles")
-            .select("id, full_name, email")
-            .eq("id", verification.verified_by)
-            .maybeSingle()
-        : Promise.resolve({ data: null, error: null }),
-      supabase
-        .from("verification_photos")
-        .select("id, file_path, photo_url, created_at")
-        .eq("verification_id", verification.id)
-        .order("created_at", { ascending: true }),
+    const [verifier, verificationPhotos] = await Promise.all([
+      prisma.profile.findUnique({
+        where: { id: verification.verifiedBy },
+        select: { id: true, fullName: true, email: true },
+      }),
+      prisma.verificationPhoto.findMany({
+        where: { verificationId: verification.id },
+        select: { id: true, filePath: true, photoUrl: true, createdAt: true },
+        orderBy: { createdAt: "asc" },
+      }),
     ]);
 
     verificationData = {
-      ...verification,
-      verifier,
-      photos: await createSignedPhotoUrls(
-        verificationPhotos ?? [],
-        "verification-photos",
-        supabase
-      ),
+      id: verification.id,
+      is_valid: verification.isValid,
+      verification_note: verification.verificationNote,
+      created_at: verification.createdAt.toISOString(),
+      verifier: verifier
+        ? { id: verifier.id, full_name: verifier.fullName, email: verifier.email }
+        : null,
+      photos: mapPhotosWithSignedUrls(verificationPhotos),
     };
   }
 
-  const progressRows = progressUpdatesError
-    ? []
-    : progressUpdates ?? [];
-  const progressUpdateIds = progressRows.map((update) => update.id);
+  const progressUpdateIds = progressUpdates.map((update) => update.id);
   const progressCreatorIds = uniqueValues(
-    progressRows
-      .map((update) => update.created_by)
+    progressUpdates
+      .map((update) => update.createdBy)
       .filter((id): id is string => Boolean(id))
   );
 
-  const [{ data: progressPhotos }, { data: progressCreators }] =
-    await Promise.all([
-      progressUpdateIds.length > 0
-        ? supabase
-            .from("report_progress_photos")
-            .select("id, progress_update_id, file_path, photo_url, created_at")
-            .in("progress_update_id", progressUpdateIds)
-            .order("created_at", { ascending: true })
-        : Promise.resolve({ data: [], error: null }),
-      progressCreatorIds.length > 0
-        ? supabase
-            .from("profiles")
-            .select("id, full_name, email")
-            .in("id", progressCreatorIds)
-        : Promise.resolve({ data: [], error: null }),
-    ]);
+  const [progressPhotos, progressCreators] = await Promise.all([
+    progressUpdateIds.length > 0
+      ? prisma.reportProgressPhoto.findMany({
+          where: { progressUpdateId: { in: progressUpdateIds } },
+          select: {
+            id: true,
+            progressUpdateId: true,
+            filePath: true,
+            photoUrl: true,
+            createdAt: true,
+          },
+          orderBy: { createdAt: "asc" },
+        })
+      : Promise.resolve([]),
+    progressCreatorIds.length > 0
+      ? prisma.profile.findMany({
+          where: { id: { in: progressCreatorIds } },
+          select: { id: true, fullName: true, email: true },
+        })
+      : Promise.resolve([]),
+  ]);
 
-  const signedProgressPhotos = await createSignedPhotoUrls(
-    progressPhotos ?? [],
-    "progress-photos",
-    supabase
-  );
+  const signedProgressPhotos = progressPhotos.map((photo) => ({
+    id: photo.id,
+    progress_update_id: photo.progressUpdateId,
+    file_path: photo.filePath,
+    photo_url: photo.photoUrl,
+    created_at: photo.createdAt.toISOString(),
+    signed_url: toDisplayUrl(photo.filePath),
+  }));
   const progressCreatorById = new Map(
-    (progressCreators ?? []).map((creator) => [creator.id, creator])
+    progressCreators.map((creator) => [
+      creator.id,
+      { full_name: creator.fullName, email: creator.email },
+    ])
   );
 
-  const budgetRows = budgetRequestsError ? [] : budgetRequests ?? [];
-  const budgetRequestIds = budgetRows.map((request) => request.id);
+  const budgetRequestIds = budgetRequests.map((request) => request.id);
   const profileIds = uniqueValues(
     [
-      ...budgetRows.map((request) => request.requested_by),
-      ...budgetRows.map((request) => request.reviewed_by),
+      ...budgetRequests.map((request) => request.requestedBy),
+      ...budgetRequests.map((request) => request.reviewedBy),
     ].filter((id): id is string => Boolean(id))
   );
   const sectionIds = uniqueValues(
-    budgetRows
-      .map((request) => request.section_id)
+    budgetRequests
+      .map((request) => request.sectionId)
       .filter((id): id is string => Boolean(id))
   );
 
-  const [
-    { data: budgetItems },
-    { data: budgetProfiles },
-    { data: budgetSections },
-  ] = await Promise.all([
+  const [budgetItems, budgetProfiles, budgetSections] = await Promise.all([
     budgetRequestIds.length > 0
-      ? supabase
-          .from("report_budget_request_items")
-          .select(
-            `
-            id,
-            budget_request_id,
-            item_name,
-            description,
-            quantity,
-            unit,
-            unit_price,
-            subtotal,
-            created_at
-            `
-          )
-          .in("budget_request_id", budgetRequestIds)
-          .order("created_at", { ascending: true })
-      : Promise.resolve({ data: [], error: null }),
+      ? prisma.reportBudgetRequestItem.findMany({
+          where: { budgetRequestId: { in: budgetRequestIds } },
+          select: {
+            id: true,
+            budgetRequestId: true,
+            itemName: true,
+            description: true,
+            quantity: true,
+            unit: true,
+            unitPrice: true,
+            subtotal: true,
+            createdAt: true,
+          },
+          orderBy: { createdAt: "asc" },
+        })
+      : Promise.resolve([]),
     profileIds.length > 0
-      ? supabase
-          .from("profiles")
-          .select("id, full_name, email")
-          .in("id", profileIds)
-      : Promise.resolve({ data: [], error: null }),
+      ? prisma.profile.findMany({
+          where: { id: { in: profileIds } },
+          select: { id: true, fullName: true, email: true },
+        })
+      : Promise.resolve([]),
     sectionIds.length > 0
-      ? supabase
-          .from("village_sections")
-          .select("id, name")
-          .in("id", sectionIds)
-      : Promise.resolve({ data: [], error: null }),
+      ? prisma.villageSection.findMany({
+          where: { id: { in: sectionIds } },
+          select: { id: true, name: true },
+        })
+      : Promise.resolve([]),
   ]);
 
   const budgetProfileById = new Map(
-    (budgetProfiles ?? []).map((budgetProfile) => [
+    budgetProfiles.map((budgetProfile) => [
       budgetProfile.id,
-      budgetProfile,
+      { full_name: budgetProfile.fullName, email: budgetProfile.email },
     ])
   );
   const budgetSectionById = new Map(
-    (budgetSections ?? []).map((budgetSection) => [
-      budgetSection.id,
-      budgetSection,
-    ])
+    budgetSections.map((budgetSection) => [budgetSection.id, budgetSection])
   );
 
   return {
     report: {
-      ...report,
-      section,
+      id: report.id,
+      report_number: report.reportNumber,
+      title: report.title,
+      description: report.description,
+      status: report.status,
+      priority: report.priority,
+      asset_status: report.assetStatus,
+      authority_level: report.authorityLevel,
+      follow_up_type: report.followUpType,
+      assigned_section_id: report.assignedSectionId,
+      admin_note: report.adminNote,
+      internal_handling_note: report.internalHandlingNote,
+      rejection_reason: report.rejectionReason,
+      latitude: Number(report.latitude),
+      longitude: Number(report.longitude),
+      auto_address: report.autoAddress,
+      manual_address: report.manualAddress,
+      verification_due_at: report.verificationDueAt?.toISOString() ?? null,
+      resolution_due_at: report.resolutionDueAt?.toISOString() ?? null,
+      resolved_at: report.resolvedAt?.toISOString() ?? null,
+      created_at: report.createdAt.toISOString(),
+      updated_at: report.updatedAt.toISOString(),
+      category: report.category,
+      hamlet: report.dusun,
+      reporter: report.reporter
+        ? {
+            full_name: report.reporter.fullName,
+            email: report.reporter.email,
+            phone_number: report.reporter.phoneNumber,
+          }
+        : null,
+      agency: report.agency
+        ? {
+            name: report.agency.name,
+            description: report.agency.description,
+            contact_person: report.agency.contactPerson,
+            phone: report.agency.phone,
+            email: report.agency.email,
+            address: report.agency.address,
+          }
+        : null,
+      section: report.assignedSection,
     },
     photos: signedReportPhotos,
-    statusLogs: statusLogs ?? [],
+    statusLogs: statusLogs.map((log) => ({
+      id: log.id,
+      old_status: log.oldStatus,
+      new_status: log.newStatus,
+      note: log.note,
+      created_at: log.createdAt.toISOString(),
+    })),
     slaEvents: {
-      schemaReady: slaEventsSchemaReady,
-      events: (slaEventsError ? [] : slaEvents ?? []) as ReportSlaEventRow[],
+      schemaReady: true,
+      events: slaEvents.map((event) => ({
+        id: event.id,
+        event_type: event.eventType,
+        previous_resolution_due_at: event.previousResolutionDueAt?.toISOString() ?? null,
+        new_resolution_due_at: event.newResolutionDueAt?.toISOString() ?? null,
+        note: event.note,
+        created_at: event.createdAt.toISOString(),
+      })),
     },
     verification: verificationData,
-    progressUpdates: progressRows.map((update) => ({
+    progressUpdates: progressUpdates.map((update) => ({
       id: update.id,
-      title: update.progress_title,
-      note: update.progress_note,
-      status: update.progress_status,
-      created_at: update.created_at,
-      creator: update.created_by
-        ? progressCreatorById.get(update.created_by) ?? null
+      title: update.progressTitle,
+      note: update.progressNote,
+      status: update.progressStatus,
+      created_at: update.createdAt.toISOString(),
+      creator: update.createdBy
+        ? progressCreatorById.get(update.createdBy) ?? null
         : null,
       photos: signedProgressPhotos.filter(
         (photo) => photo.progress_update_id === update.id
       ),
     })),
-    budgetRequests: budgetRows.map((request) => ({
+    budgetRequests: budgetRequests.map((request) => ({
       id: request.id,
-      note: request.summary_note,
-      estimated_budget: Number(request.total_estimated_budget || 0),
+      note: request.summaryNote,
+      estimated_budget: Number(request.totalEstimatedBudget || 0),
       status: request.status,
-      created_at: request.created_at,
-      updated_at: request.updated_at,
-      reviewed_at: request.reviewed_at,
-      review_note: request.review_note,
-      requester: request.requested_by
-        ? budgetProfileById.get(request.requested_by) ?? null
+      created_at: request.createdAt.toISOString(),
+      updated_at: request.updatedAt.toISOString(),
+      reviewed_at: request.reviewedAt?.toISOString() ?? null,
+      review_note: request.reviewNote,
+      requester: request.requestedBy
+        ? budgetProfileById.get(request.requestedBy) ?? null
         : null,
-      reviewer: request.reviewed_by
-        ? budgetProfileById.get(request.reviewed_by) ?? null
+      reviewer: request.reviewedBy
+        ? budgetProfileById.get(request.reviewedBy) ?? null
         : null,
-      section: request.section_id
-        ? budgetSectionById.get(request.section_id) ?? null
+      section: request.sectionId
+        ? budgetSectionById.get(request.sectionId) ?? null
         : null,
-      items: (budgetItems ?? [])
-        .filter((item) => item.budget_request_id === request.id)
+      items: budgetItems
+        .filter((item) => item.budgetRequestId === request.id)
         .map((item) => ({
-          ...item,
+          id: item.id,
+          item_name: item.itemName,
+          description: item.description,
           quantity: Number(item.quantity || 0),
-          unit_price: Number(item.unit_price || 0),
+          unit: item.unit,
+          unit_price: Number(item.unitPrice || 0),
           subtotal: Number(item.subtotal || 0),
         })),
     })),
   };
-}
-
-type PhotoRow = {
-  file_path?: string | null;
-  photo_url?: string | null;
-};
-
-async function createSignedPhotoUrls<TPhoto extends PhotoRow>(
-  photos: TPhoto[],
-  bucket: string,
-  supabase: SupabaseClient
-) {
-  return Promise.all(
-    photos.map(async (photo) => {
-      const path = photo.file_path || photo.photo_url;
-
-      if (!path) {
-        return {
-          ...photo,
-          signed_url: null,
-        };
-      }
-
-      const { data } = await supabase.storage
-        .from(bucket)
-        .createSignedUrl(path, 60 * 60);
-
-      return {
-        ...photo,
-        signed_url: data?.signedUrl ?? null,
-      };
-    })
-  );
 }
