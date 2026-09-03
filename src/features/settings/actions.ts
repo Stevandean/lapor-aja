@@ -2,14 +2,16 @@
 
 import { revalidatePath } from "next/cache";
 import { redirect } from "next/navigation";
+import { promises as fs } from "fs";
+import path from "path";
 import bcrypt from "bcrypt";
 import { getProfile } from "@/src/lib/auth/getProfile";
 import { ROUTES } from "@/src/lib/constants/routes";
-import { createClient } from "@/src/lib/supabase/server";
 import { prisma } from "@/src/lib/prisma";
 import type { ActionState } from "@/src/types/action";
 
 const MAX_AVATAR_SIZE = 2 * 1024 * 1024;
+const AVATARS_ROOT = path.join(process.cwd(), "public", "uploads", "avatars");
 
 async function requireProfile() {
   const profile = await getProfile();
@@ -43,7 +45,6 @@ export async function updateOwnProfile(
     };
   }
 
-  const supabase = await createClient();
   let avatarPath: string | null | undefined;
 
   if (avatar instanceof File && avatar.size > 0) {
@@ -62,21 +63,21 @@ export async function updateOwnProfile(
     }
 
     const extension = avatar.name.split(".").pop() || "jpg";
-    avatarPath = `${profile.id}/avatar.${extension}`;
+    const fileName = `avatar.${extension}`;
+    avatarPath = `/uploads/avatars/${profile.id}/${fileName}`;
+    const avatarDir = path.join(AVATARS_ROOT, profile.id);
 
-    const { error: uploadError } = await supabase.storage
-      .from("profile-avatars")
-      .upload(avatarPath, avatar, {
-        contentType: avatar.type,
-        upsert: true,
-      });
+    try {
+      await fs.rm(avatarDir, { recursive: true, force: true });
+      await fs.mkdir(avatarDir, { recursive: true });
 
-    if (uploadError) {
+      const buffer = Buffer.from(await avatar.arrayBuffer());
+      await fs.writeFile(path.join(avatarDir, fileName), buffer);
+    } catch (error) {
       return {
         status: "error",
         message:
-          uploadError.message ||
-          "Gagal mengunggah foto profil. Jalankan migration pengaturan terlebih dahulu.",
+          error instanceof Error ? error.message : "Gagal mengunggah foto profil.",
       };
     }
   }

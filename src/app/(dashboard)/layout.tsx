@@ -1,9 +1,12 @@
 import { DashboardShell } from "@/src/components/layout/DashboardShell";
 import { getNavbarNotifications } from "@/src/features/notifications/queries";
 import { getProfile } from "@/src/lib/auth/getProfile";
-import { createClient } from "@/src/lib/supabase/server";
 import { redirect } from "next/navigation";
 import { ROUTES } from "@/src/lib/constants/routes";
+
+function toDisplayUrl(filePath: string | null | undefined) {
+  return filePath && filePath.startsWith("/") ? filePath : null;
+}
 
 export default async function DashboardLayout({
   children,
@@ -17,7 +20,7 @@ export default async function DashboardLayout({
   }
 
   const notifications = await getNavbarNotifications(profile.id);
-  const avatarSignedUrl = await getAvatarSignedUrl(profile.avatar_url);
+  const avatarSignedUrl = toDisplayUrl(profile.avatar_url);
 
   return (
     <DashboardShell
@@ -27,17 +30,4 @@ export default async function DashboardLayout({
       {children}
     </DashboardShell>
   );
-}
-
-async function getAvatarSignedUrl(avatarPath: string | null) {
-  if (!avatarPath) {
-    return null;
-  }
-
-  const supabase = await createClient();
-  const { data } = await supabase.storage
-    .from("profile-avatars")
-    .createSignedUrl(avatarPath, 60 * 60);
-
-  return data?.signedUrl ?? null;
 }

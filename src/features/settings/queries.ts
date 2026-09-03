@@ -1,8 +1,11 @@
 import { redirect } from "next/navigation";
 import { getProfile } from "@/src/lib/auth/getProfile";
 import { ROUTES } from "@/src/lib/constants/routes";
-import { createClient } from "@/src/lib/supabase/server";
 import { prisma } from "@/src/lib/prisma";
+
+function toDisplayUrl(filePath: string | null | undefined) {
+  return filePath && filePath.startsWith("/") ? filePath : null;
+}
 
 export async function getSettingsProfile() {
   const profile = await getProfile();
@@ -24,16 +27,7 @@ export async function getSettingsProfile() {
     redirect(ROUTES.LOGIN);
   }
 
-  let avatarSignedUrl: string | null = null;
-
-  if (settingsProfile.avatarUrl) {
-    const supabase = await createClient();
-    const { data: signedUrlData } = await supabase.storage
-      .from("profile-avatars")
-      .createSignedUrl(settingsProfile.avatarUrl, 60 * 60);
-
-    avatarSignedUrl = signedUrlData?.signedUrl ?? null;
-  }
+  const avatarSignedUrl = toDisplayUrl(settingsProfile.avatarUrl);
 
   return {
     id: settingsProfile.id,

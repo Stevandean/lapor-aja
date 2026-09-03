@@ -1,7 +1,7 @@
 "use server";
 
 import { revalidatePath } from "next/cache";
-import { createClient } from "@/src/lib/supabase/server";
+import { prisma } from "@/src/lib/prisma";
 import type { ActionState } from "@/src/types/action";
 import { sendOfficialLetterViaBrevo } from "@/src/lib/email/sendEmail";
 import { requireAdmin } from "./shared";
@@ -21,21 +21,10 @@ export async function createOfficialLetter(
     };
   }
 
-  const supabase = await createClient();
-
-  const { data: existingLetter, error: existingLetterError } = await supabase
-    .from("official_letters")
-    .select("id")
-    .eq("report_id", reportId)
-    .eq("letter_type", "surat_permohonan_perbaikan")
-    .maybeSingle();
-
-  if (existingLetterError) {
-    return {
-      status: "error",
-      message: existingLetterError.message,
-    };
-  }
+  const existingLetter = await prisma.officialLetter.findFirst({
+    where: { reportId, letterType: "surat_permohonan_perbaikan" },
+    select: { id: true },
+  });
 
   if (existingLetter) {
     return {
@@ -44,26 +33,23 @@ export async function createOfficialLetter(
     };
   }
 
-  const { data: report, error: reportError } = await supabase
-    .from("reports")
-    .select(
-      `
-      id,
-      report_number,
-      title,
-      description,
-      status,
-      agency_id,
-      auto_address,
-      manual_address,
-      latitude,
-      longitude
-      `
-    )
-    .eq("id", reportId)
-    .single();
+  const report = await prisma.report.findUnique({
+    where: { id: reportId },
+    select: {
+      id: true,
+      reportNumber: true,
+      title: true,
+      description: true,
+      status: true,
+      agencyId: true,
+      autoAddress: true,
+      manualAddress: true,
+      latitude: true,
+      longitude: true,
+    },
+  });
 
-  if (reportError || !report) {
+  if (!report) {
     return {
       status: "error",
       message: "Laporan tidak ditemukan.",
@@ -78,33 +64,32 @@ export async function createOfficialLetter(
     };
   }
 
-  if (!report.agency_id) {
+  if (!report.agencyId) {
     return {
       status: "error",
       message: "Instansi tujuan belum dipilih untuk laporan ini.",
     };
   }
 
-  const { data: agency, error: agencyError } = await supabase
-    .from("agencies")
-    .select("id, name, address")
-    .eq("id", report.agency_id)
-    .single();
+  const agency = await prisma.agency.findUnique({
+    where: { id: report.agencyId },
+    select: { id: true, name: true, address: true },
+  });
 
-  if (agencyError || !agency) {
+  if (!agency) {
     return {
       status: "error",
       message: "Instansi tujuan tidak ditemukan.",
     };
   }
 
-  const letterNumber = generateOfficialLetterNumber(report.report_number);
+  const letterNumber = generateOfficialLetterNumber(report.reportNumber);
 
-  const subject = `Permohonan Perbaikan Tindak Lanjut Laporan ${report.report_number}`;
+  const subject = `Permohonan Perbaikan Tindak Lanjut Laporan ${report.reportNumber}`;
 
   const location =
-    report.manual_address ||
-    report.auto_address ||
+    report.manualAddress ||
+    report.autoAddress ||
     `Latitude ${report.latitude}, Longitude ${report.longitude}`;
 
   const body = [
@@ -114,7 +99,7 @@ export async function createOfficialLetter(
     "",
     "Dengan hormat,",
     "",
-    `Sehubungan dengan adanya laporan masyarakat melalui Sistem Lapor Aja dengan nomor laporan ${report.report_number}, Pemerintah Desa bermaksud menyampaikan permohonan tindak lanjut kepada ${agency.name}.`,
+    `Sehubungan dengan adanya laporan masyarakat melalui Sistem Lapor Aja dengan nomor laporan ${report.reportNumber}, Pemerintah Desa bermaksud menyampaikan permohonan tindak lanjut kepada ${agency.name}.`,
     "",
     "Adapun ringkasan laporan adalah sebagai berikut:",
     `Judul Laporan: ${report.title}`,
@@ -128,22 +113,23 @@ export async function createOfficialLetter(
     .filter(Boolean)
     .join("\n");
 
-  const { error } = await supabase.from("official_letters").insert({
-    report_id: report.id,
-    letter_type: "surat_permohonan_perbaikan",
-    letter_number: letterNumber,
-    subject,
-    body,
-    recipient_agency_id: agency.id,
-    generated_by: profile.id,
-    generated_at: new Date().toISOString(),
-    status: "draft",
-  });
-
-  if (error) {
+  try {
+    await prisma.officialLetter.create({
+      data: {
+        reportId: report.id,
+        letterType: "surat_permohonan_perbaikan",
+        letterNumber,
+        subject,
+        body,
+        recipientAgencyId: agency.id,
+        generatedBy: profile.id,
+        status: "draft",
+      },
+    });
+  } catch (error) {
     return {
       status: "error",
-      message: error.message,
+      message: error instanceof Error ? error.message : "Gagal membuat surat resmi.",
     };
   }
 
@@ -197,15 +183,12 @@ export async function finalizeOfficialLetter(
     };
   }
 
-  const supabase = await createClient();
+  const letter = await prisma.officialLetter.findUnique({
+    where: { id: letterId },
+    select: { id: true, status: true },
+  });
 
-  const { data: letter, error: letterError } = await supabase
-    .from("official_letters")
-    .select("id, status")
-    .eq("id", letterId)
-    .single();
-
-  if (letterError || !letter) {
+  if (!letter) {
     return {
       status: "error",
       message: "Surat resmi tidak ditemukan.",
@@ -226,18 +209,15 @@ export async function finalizeOfficialLetter(
     };
   }
 
-  const { error } = await supabase
-    .from("official_letters")
-    .update({
-      status: "final",
-      updated_at: new Date().toISOString(),
-    })
-    .eq("id", letterId);
-
-  if (error) {
+  try {
+    await prisma.officialLetter.update({
+      where: { id: letterId },
+      data: { status: "final" },
+    });
+  } catch (error) {
     return {
       status: "error",
-      message: error.message,
+      message: error instanceof Error ? error.message : "Gagal menandai surat resmi final.",
     };
   }
 
@@ -265,25 +245,20 @@ export async function sendOfficialLetterEmail(
     };
   }
 
-  const supabase = await createClient();
+  const letter = await prisma.officialLetter.findUnique({
+    where: { id: letterId },
+    select: {
+      id: true,
+      reportId: true,
+      letterNumber: true,
+      subject: true,
+      body: true,
+      recipientAgencyId: true,
+      status: true,
+    },
+  });
 
-  const { data: letter, error: letterError } = await supabase
-    .from("official_letters")
-    .select(
-      `
-      id,
-      report_id,
-      letter_number,
-      subject,
-      body,
-      recipient_agency_id,
-      status
-      `
-    )
-    .eq("id", letterId)
-    .single();
-
-  if (letterError || !letter) {
+  if (!letter) {
     return {
       status: "error",
       message: "Surat resmi tidak ditemukan.",
@@ -304,51 +279,47 @@ export async function sendOfficialLetterEmail(
     };
   }
 
-  if (!letter.recipient_agency_id) {
+  if (!letter.recipientAgencyId) {
     return {
       status: "error",
       message: "Instansi penerima tidak ditemukan.",
     };
   }
 
-  const { data: report, error: reportError } = await supabase
-    .from("reports")
-    .select(
-      `
-      id,
-      report_number,
-      title,
-      description,
-      manual_address,
-      auto_address,
-      latitude,
-      longitude
-      `
-    )
-    .eq("id", letter.report_id)
-    .single();
+  const report = await prisma.report.findUnique({
+    where: { id: letter.reportId },
+    select: {
+      id: true,
+      reportNumber: true,
+      title: true,
+      description: true,
+      manualAddress: true,
+      autoAddress: true,
+      latitude: true,
+      longitude: true,
+    },
+  });
 
-  if (reportError || !report) {
+  if (!report) {
     return {
       status: "error",
       message: "Laporan terkait tidak ditemukan.",
     };
   }
 
-  const { data: agency, error: agencyError } = await supabase
-    .from("agencies")
-    .select("id, name, email, is_active")
-    .eq("id", letter.recipient_agency_id)
-    .single();
+  const agency = await prisma.agency.findUnique({
+    where: { id: letter.recipientAgencyId },
+    select: { id: true, name: true, email: true, isActive: true },
+  });
 
-  if (agencyError || !agency) {
+  if (!agency) {
     return {
       status: "error",
       message: "Instansi penerima tidak ditemukan.",
     };
   }
 
-  if (!agency.is_active) {
+  if (!agency.isActive) {
     return {
       status: "error",
       message: "Instansi penerima tidak aktif.",
@@ -363,71 +334,48 @@ export async function sendOfficialLetterEmail(
   }
 
   const location =
-    report.manual_address ||
-    report.auto_address ||
+    report.manualAddress ||
+    report.autoAddress ||
     `Latitude ${report.latitude}, Longitude ${report.longitude}`;
 
   try {
     await sendOfficialLetterViaBrevo({
       agencyEmail: agency.email,
       agencyName: agency.name,
-      letterNumber: letter.letter_number,
+      letterNumber: letter.letterNumber ?? "",
       letterSubject: letter.subject,
-      letterBody: letter.body,
-      reportNumber: report.report_number,
+      letterBody: letter.body ?? "",
+      reportNumber: report.reportNumber,
       reportTitle: report.title,
       reportDescription: report.description,
       reportAddress: location,
     });
 
-    const now = new Date().toISOString();
-
-    const { error: notificationError } = await supabase
-      .from("notifications")
-      .insert({
-        user_id: null,
-        report_id: report.id,
-        recipient_email: agency.email,
-        subject: letter.subject,
-        message: `Surat resmi ${letter.letter_number || letter.subject} sudah dikirim ke ${agency.name}.`,
-        status: "sent",
-        sent_at: now,
-        error_message: null,
+    try {
+      await prisma.notification.create({
+        data: {
+          userId: null,
+          reportId: report.id,
+          recipientEmail: agency.email,
+          subject: letter.subject,
+          message: `Surat resmi ${letter.letterNumber || letter.subject} sudah dikirim ke ${agency.name}.`,
+          status: "sent",
+          sentAt: new Date(),
+        },
       });
-
-    if (notificationError) {
+    } catch (notificationError) {
       console.error("Failed to create sent notification:", notificationError);
     }
 
-    const { error: updateLetterError } = await supabase
-      .from("official_letters")
-      .update({
-        status: "sent",
-        updated_at: now,
-      })
-      .eq("id", letter.id);
+    await prisma.officialLetter.update({
+      where: { id: letter.id },
+      data: { status: "sent" },
+    });
 
-    if (updateLetterError) {
-      return {
-        status: "error",
-        message: updateLetterError.message,
-      };
-    }
-
-    const { error: updateReportError } = await supabase
-      .from("reports")
-      .update({
-        status: "forwarded_to_agency",
-        updated_at: now,
-      })
-      .eq("id", report.id);
-
-    if (updateReportError) {
-      return {
-        status: "error",
-        message: updateReportError.message,
-      };
-    }
+    await prisma.report.update({
+      where: { id: report.id },
+      data: { status: "forwarded_to_agency" },
+    });
 
     revalidatePath("/dashboard/admin/letters");
     revalidatePath(`/dashboard/admin/letters/${letter.id}`);
@@ -442,20 +390,19 @@ export async function sendOfficialLetterEmail(
         ? error.message
         : "Gagal mengirim email surat resmi.";
 
-    const { error: notificationError } = await supabase
-      .from("notifications")
-      .insert({
-        user_id: null,
-        report_id: report.id,
-        recipient_email: agency.email,
-        subject: letter.subject,
-        message: `Gagal mengirim surat resmi ${letter.letter_number || letter.subject} ke ${agency.name}.`,
-        status: "failed",
-        sent_at: null,
-        error_message: errorMessage,
+    try {
+      await prisma.notification.create({
+        data: {
+          userId: null,
+          reportId: report.id,
+          recipientEmail: agency.email,
+          subject: letter.subject,
+          message: `Gagal mengirim surat resmi ${letter.letterNumber || letter.subject} ke ${agency.name}.`,
+          status: "failed",
+          errorMessage,
+        },
       });
-
-    if (notificationError) {
+    } catch (notificationError) {
       console.error("Failed to create failed notification:", notificationError);
     }
 

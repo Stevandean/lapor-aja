@@ -4,7 +4,7 @@ import { revalidatePath } from "next/cache";
 import { redirect } from "next/navigation";
 import { getProfile } from "@/src/lib/auth/getProfile";
 import { ROUTES } from "@/src/lib/constants/routes";
-import { createClient } from "@/src/lib/supabase/server";
+import { prisma } from "@/src/lib/prisma";
 
 export async function markNavbarNotificationsAsRead() {
   const profile = await getProfile();
@@ -13,16 +13,10 @@ export async function markNavbarNotificationsAsRead() {
     redirect(ROUTES.LOGIN);
   }
 
-  const supabase = await createClient();
-  const { error } = await supabase
-    .from("notifications")
-    .update({ read_at: new Date().toISOString() })
-    .eq("user_id", profile.id)
-    .is("read_at", null);
-
-  if (error) {
-    console.error("Failed to mark notifications as read:", error.message);
-  }
+  await prisma.notification.updateMany({
+    where: { userId: profile.id, readAt: null },
+    data: { readAt: new Date() },
+  });
 
   revalidatePath("/dashboard");
 }

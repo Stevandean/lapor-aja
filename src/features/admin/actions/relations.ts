@@ -1,14 +1,15 @@
 "use server";
 
 import { revalidatePath } from "next/cache";
-import { createAdminClient } from "@/src/lib/supabase/admin";
+import { prisma } from "@/src/lib/prisma";
+import type { ReportRelationType, ReportStatus } from "@prisma/client";
 import type { ActionState } from "@/src/types/action";
 import { createReportStatusLog } from "@/src/features/reports/statusLogs";
 import { recordSlaEvent } from "@/src/features/reports/slaEvents";
 import { notifyReporterRecurringIssue } from "@/src/features/reports/internalNotifications";
 import { requireAdmin } from "./shared";
 
-const ACTIVE_RELATION_STATUSES = [
+const ACTIVE_RELATION_STATUSES: ReportStatus[] = [
   "pending",
   "need_verification",
   "verified_valid",
@@ -19,7 +20,7 @@ const ACTIVE_RELATION_STATUSES = [
   "in_progress",
 ];
 
-const RECURRENCE_REFERENCE_STATUSES = ["resolved", "archived"];
+const RECURRENCE_REFERENCE_STATUSES: ReportStatus[] = ["resolved", "archived"];
 
 export async function linkRelatedReport(
   _prevState: ActionState,
@@ -60,26 +61,13 @@ export async function linkRelatedReport(
     };
   }
 
-  const supabase = createAdminClient();
+  const reports = await prisma.report.findMany({
+    where: { id: { in: [sourceReportId, targetReportId] } },
+    select: { id: true, reportNumber: true, title: true, status: true },
+  });
 
-  const { data: reports, error: reportsError } = await supabase
-    .from("reports")
-    .select("id, report_number, title, status, reporter_id")
-    .in("id", [sourceReportId, targetReportId]);
-
-  if (reportsError) {
-    return {
-      status: "error",
-      message: reportsError.message,
-    };
-  }
-
-  const sourceReport = (reports ?? []).find(
-    (report) => report.id === sourceReportId
-  );
-  const targetReport = (reports ?? []).find(
-    (report) => report.id === targetReportId
-  );
+  const sourceReport = reports.find((report) => report.id === sourceReportId);
+  const targetReport = reports.find((report) => report.id === targetReportId);
 
   if (!sourceReport || !targetReport) {
     return {
@@ -118,21 +106,13 @@ export async function linkRelatedReport(
     };
   }
 
-  const { data: existingSourceRelations, error: existingSourceRelationsError } =
-    await supabase
-      .from("report_relations")
-      .select("relation_type")
-      .eq("source_report_id", sourceReportId);
+  const existingSourceRelations = await prisma.reportRelation.findMany({
+    where: { sourceReportId },
+    select: { relationType: true },
+  });
 
-  if (existingSourceRelationsError) {
-    return {
-      status: "error",
-      message: existingSourceRelationsError.message,
-    };
-  }
-
-  const hasSameRelation = (existingSourceRelations ?? []).some(
-    (relation) => relation.relation_type === relationType
+  const hasSameRelation = existingSourceRelations.some(
+    (relation) => relation.relationType === relationType
   );
 
   if (hasSameRelation) {
@@ -145,55 +125,41 @@ export async function linkRelatedReport(
     };
   }
 
-  const { error: relationError } = await supabase
-    .from("report_relations")
-    .insert({
-      source_report_id: sourceReportId,
-      target_report_id: targetReportId,
-      relation_type: relationType,
-      note,
-      created_by: profile.id,
+  try {
+    await prisma.reportRelation.create({
+      data: {
+        sourceReportId,
+        targetReportId,
+        relationType: relationType as ReportRelationType,
+        note,
+        createdBy: profile.id,
+      },
     });
-
-  if (relationError) {
-    const isDuplicateRelation =
-      relationError.message.includes("duplicate key") ||
-      relationError.message.includes("unique");
-
+  } catch (error) {
     return {
       status: "error",
-      message: isDuplicateRelation
-        ? "Relasi laporan ini sudah ada."
-        : relationError.message,
+      message: error instanceof Error ? error.message : "Relasi laporan ini sudah ada.",
     };
   }
 
   if (relationType === "duplicate") {
-    const { data: mergedReport, error: updateError } = await supabase
-      .from("reports")
-      .update({
-        status: "merged",
-        sla_status: "completed",
-        updated_at: new Date().toISOString(),
-      })
-      .eq("id", sourceReportId)
-      .eq("status", sourceReport.status)
-      .select("id")
-      .maybeSingle();
+    const { count: mergedCount } = await prisma.report.updateMany({
+      where: { id: sourceReportId, status: sourceReport.status },
+      data: { status: "merged", slaStatus: "completed" },
+    });
 
-    if (updateError || !mergedReport) {
-      await supabase
-        .from("report_relations")
-        .delete()
-        .eq("source_report_id", sourceReportId)
-        .eq("target_report_id", targetReportId)
-        .eq("relation_type", "duplicate");
+    if (mergedCount === 0) {
+      await prisma.reportRelation.deleteMany({
+        where: {
+          sourceReportId,
+          targetReportId,
+          relationType: "duplicate",
+        },
+      });
 
       return {
         status: "error",
-        message:
-        updateError?.message ||
-          "Laporan ini tidak bisa digabung karena statusnya sudah berubah.",
+        message: "Laporan ini tidak bisa digabung karena statusnya sudah berubah.",
       };
     }
 
@@ -201,20 +167,20 @@ export async function linkRelatedReport(
       reportId: sourceReportId,
       oldStatus: sourceReport.status,
       newStatus: "merged",
-      note: `Laporan digabung ke ${targetReport.report_number}. ${note}`,
+      note: `Laporan digabung ke ${targetReport.reportNumber}. ${note}`,
     });
 
     await recordSlaEvent({
       reportId: sourceReportId,
       eventType: "merged",
-      note: `SLA dihentikan karena laporan ini digabung ke ${targetReport.report_number}.`,
+      note: `SLA dihentikan karena laporan ini digabung ke ${targetReport.reportNumber}.`,
     });
 
     await createReportStatusLog({
       reportId: targetReportId,
       oldStatus: targetReport.status,
       newStatus: targetReport.status,
-      note: `Laporan duplikat ${sourceReport.report_number} digabung ke laporan master ini. ${note}`,
+      note: `Laporan duplikat ${sourceReport.reportNumber} digabung ke laporan master ini. ${note}`,
       notifyReporter: false,
       notifyWhatsApp: false,
     });
@@ -225,7 +191,7 @@ export async function linkRelatedReport(
       reportId: sourceReportId,
       oldStatus: sourceReport.status,
       newStatus: sourceReport.status,
-      note: `Laporan ditandai sebagai masalah berulang dari ${targetReport.report_number}. ${note}`,
+      note: `Laporan ditandai sebagai masalah berulang dari ${targetReport.reportNumber}. ${note}`,
       notifyReporter: false,
       notifyWhatsApp: false,
     });
@@ -302,23 +268,13 @@ export async function bulkMergeDuplicateReports(
     };
   }
 
-  const supabase = createAdminClient();
-  const { data: reports, error: reportsError } = await supabase
-    .from("reports")
-    .select("id, report_number, title, status")
-    .in("id", [masterReportId, ...sourceReportIds]);
+  const reports = await prisma.report.findMany({
+    where: { id: { in: [masterReportId, ...sourceReportIds] } },
+    select: { id: true, reportNumber: true, title: true, status: true },
+  });
 
-  if (reportsError) {
-    return {
-      status: "error",
-      message: reportsError.message,
-    };
-  }
-
-  const masterReport = (reports ?? []).find(
-    (report) => report.id === masterReportId
-  );
-  const sourceReports = (reports ?? []).filter((report) =>
+  const masterReport = reports.find((report) => report.id === masterReportId);
+  const sourceReports = reports.filter((report) =>
     sourceReportIds.includes(report.id)
   );
 
@@ -350,29 +306,18 @@ export async function bulkMergeDuplicateReports(
   if (invalidSource) {
     return {
       status: "error",
-      message: `Laporan ${invalidSource.report_number} tidak lagi aktif dan tidak bisa digabung.`,
+      message: `Laporan ${invalidSource.reportNumber} tidak lagi aktif dan tidak bisa digabung.`,
     };
   }
 
-  const { data: existingDuplicateRelations, error: existingRelationsError } =
-    await supabase
-      .from("report_relations")
-      .select("source_report_id, target_report_id")
-      .in("source_report_id", sourceReportIds)
-      .eq("relation_type", "duplicate");
+  const existingDuplicateRelations = await prisma.reportRelation.findMany({
+    where: { sourceReportId: { in: sourceReportIds }, relationType: "duplicate" },
+    select: { sourceReportId: true },
+  });
 
-  if (existingRelationsError) {
-    return {
-      status: "error",
-      message: existingRelationsError.message,
-    };
-  }
-
-  if ((existingDuplicateRelations ?? []).length > 0) {
+  if (existingDuplicateRelations.length > 0) {
     const relatedSourceIds = new Set(
-      (existingDuplicateRelations ?? []).map(
-        (relation) => relation.source_report_id
-      )
+      existingDuplicateRelations.map((relation) => relation.sourceReportId)
     );
     const relatedReport = sourceReports.find((report) =>
       relatedSourceIds.has(report.id)
@@ -381,57 +326,45 @@ export async function bulkMergeDuplicateReports(
     return {
       status: "error",
       message: relatedReport
-        ? `Laporan ${relatedReport.report_number} sudah digabung sebagai duplikat.`
+        ? `Laporan ${relatedReport.reportNumber} sudah digabung sebagai duplikat.`
         : "Satu atau lebih laporan yang dipilih sudah digabung sebagai duplikat.",
     };
   }
 
-  const now = new Date().toISOString();
-  const { error: relationError } = await supabase
-    .from("report_relations")
-    .insert(
-      sourceReports.map((report) => ({
-        source_report_id: report.id,
-        target_report_id: masterReportId,
-        relation_type: "duplicate",
+  try {
+    await prisma.reportRelation.createMany({
+      data: sourceReports.map((report) => ({
+        sourceReportId: report.id,
+        targetReportId: masterReportId,
+        relationType: "duplicate" as ReportRelationType,
         note,
-        created_by: profile.id,
-        created_at: now,
-        updated_at: now,
-      }))
-    );
-
-  if (relationError) {
+        createdBy: profile.id,
+      })),
+    });
+  } catch (error) {
     return {
       status: "error",
-      message: relationError.message,
+      message: error instanceof Error ? error.message : "Gagal menyimpan relasi laporan.",
     };
   }
 
-  const { data: mergedReports, error: updateError } = await supabase
-    .from("reports")
-    .update({
-      status: "merged",
-      sla_status: "completed",
-      updated_at: now,
-    })
-    .in("id", sourceReportIds)
-    .in("status", ACTIVE_RELATION_STATUSES)
-    .select("id");
+  const { count: mergedCount } = await prisma.report.updateMany({
+    where: { id: { in: sourceReportIds }, status: { in: ACTIVE_RELATION_STATUSES } },
+    data: { status: "merged", slaStatus: "completed" },
+  });
 
-  if (updateError || (mergedReports ?? []).length !== sourceReports.length) {
-    await supabase
-      .from("report_relations")
-      .delete()
-      .in("source_report_id", sourceReportIds)
-      .eq("target_report_id", masterReportId)
-      .eq("relation_type", "duplicate");
+  if (mergedCount !== sourceReports.length) {
+    await prisma.reportRelation.deleteMany({
+      where: {
+        sourceReportId: { in: sourceReportIds },
+        targetReportId: masterReportId,
+        relationType: "duplicate",
+      },
+    });
 
     return {
       status: "error",
-      message:
-        updateError?.message ||
-        "Satu atau lebih laporan tidak bisa digabung karena statusnya sudah berubah.",
+      message: "Satu atau lebih laporan tidak bisa digabung karena statusnya sudah berubah.",
     };
   }
 
@@ -440,13 +373,13 @@ export async function bulkMergeDuplicateReports(
       reportId: sourceReport.id,
       oldStatus: sourceReport.status,
       newStatus: "merged",
-      note: `Laporan digabung ke ${masterReport.report_number}. ${note}`,
+      note: `Laporan digabung ke ${masterReport.reportNumber}. ${note}`,
     });
 
     await recordSlaEvent({
       reportId: sourceReport.id,
       eventType: "merged",
-      note: `SLA dihentikan karena laporan ini digabung ke ${masterReport.report_number}.`,
+      note: `SLA dihentikan karena laporan ini digabung ke ${masterReport.reportNumber}.`,
     });
   }
 
@@ -474,7 +407,7 @@ export async function bulkMergeDuplicateReports(
 
   return {
     status: "success",
-    message: `${sourceReports.length} laporan duplikat berhasil digabung ke ${masterReport.report_number}.`,
+    message: `${sourceReports.length} laporan duplikat berhasil digabung ke ${masterReport.reportNumber}.`,
   };
 }
 
@@ -523,23 +456,13 @@ export async function bulkMarkRecurringReports(
     };
   }
 
-  const supabase = createAdminClient();
-  const { data: reports, error: reportsError } = await supabase
-    .from("reports")
-    .select("id, report_number, title, status")
-    .in("id", [targetReportId, ...sourceReportIds]);
+  const reports = await prisma.report.findMany({
+    where: { id: { in: [targetReportId, ...sourceReportIds] } },
+    select: { id: true, reportNumber: true, title: true, status: true },
+  });
 
-  if (reportsError) {
-    return {
-      status: "error",
-      message: reportsError.message,
-    };
-  }
-
-  const targetReport = (reports ?? []).find(
-    (report) => report.id === targetReportId
-  );
-  const sourceReports = (reports ?? []).filter((report) =>
+  const targetReport = reports.find((report) => report.id === targetReportId);
+  const sourceReports = reports.filter((report) =>
     sourceReportIds.includes(report.id)
   );
 
@@ -572,29 +495,18 @@ export async function bulkMarkRecurringReports(
   if (invalidSource) {
     return {
       status: "error",
-      message: `Laporan ${invalidSource.report_number} tidak lagi aktif dan tidak bisa ditandai sebagai masalah berulang.`,
+      message: `Laporan ${invalidSource.reportNumber} tidak lagi aktif dan tidak bisa ditandai sebagai masalah berulang.`,
     };
   }
 
-  const { data: existingRecurrences, error: existingRecurrencesError } =
-    await supabase
-      .from("report_relations")
-      .select("source_report_id, target_report_id")
-      .in("source_report_id", sourceReportIds)
-      .eq("relation_type", "recurrence");
+  const existingRecurrences = await prisma.reportRelation.findMany({
+    where: { sourceReportId: { in: sourceReportIds }, relationType: "recurrence" },
+    select: { sourceReportId: true },
+  });
 
-  if (existingRecurrencesError) {
-    return {
-      status: "error",
-      message: existingRecurrencesError.message,
-    };
-  }
-
-  if ((existingRecurrences ?? []).length > 0) {
+  if (existingRecurrences.length > 0) {
     const recurringSourceIds = new Set(
-      (existingRecurrences ?? []).map(
-        (relation) => relation.source_report_id
-      )
+      existingRecurrences.map((relation) => relation.sourceReportId)
     );
     const relatedReport = sourceReports.find((report) =>
       recurringSourceIds.has(report.id)
@@ -603,30 +515,25 @@ export async function bulkMarkRecurringReports(
     return {
       status: "error",
       message: relatedReport
-        ? `Laporan ${relatedReport.report_number} sudah ditandai sebagai masalah berulang.`
+        ? `Laporan ${relatedReport.reportNumber} sudah ditandai sebagai masalah berulang.`
         : "Satu atau lebih laporan yang dipilih sudah ditandai sebagai masalah berulang.",
     };
   }
 
-  const now = new Date().toISOString();
-  const { error: relationError } = await supabase
-    .from("report_relations")
-    .insert(
-      sourceReports.map((report) => ({
-        source_report_id: report.id,
-        target_report_id: targetReportId,
-        relation_type: "recurrence",
+  try {
+    await prisma.reportRelation.createMany({
+      data: sourceReports.map((report) => ({
+        sourceReportId: report.id,
+        targetReportId,
+        relationType: "recurrence" as ReportRelationType,
         note,
-        created_by: profile.id,
-        created_at: now,
-        updated_at: now,
-      }))
-    );
-
-  if (relationError) {
+        createdBy: profile.id,
+      })),
+    });
+  } catch (error) {
     return {
       status: "error",
-      message: relationError.message,
+      message: error instanceof Error ? error.message : "Gagal menyimpan relasi laporan.",
     };
   }
 
@@ -635,7 +542,7 @@ export async function bulkMarkRecurringReports(
       reportId: sourceReport.id,
       oldStatus: sourceReport.status,
       newStatus: sourceReport.status,
-      note: `Laporan ditandai sebagai masalah berulang dari ${targetReport.report_number}. ${note}`,
+      note: `Laporan ditandai sebagai masalah berulang dari ${targetReport.reportNumber}. ${note}`,
       notifyReporter: false,
       notifyWhatsApp: false,
     });
@@ -672,6 +579,6 @@ export async function bulkMarkRecurringReports(
 
   return {
     status: "success",
-    message: `${sourceReports.length} laporan aktif berhasil ditandai sebagai masalah berulang dari ${targetReport.report_number}.`,
+    message: `${sourceReports.length} laporan aktif berhasil ditandai sebagai masalah berulang dari ${targetReport.reportNumber}.`,
   };
 }

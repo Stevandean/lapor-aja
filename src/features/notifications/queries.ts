@@ -1,4 +1,4 @@
-import { createClient } from "@/src/lib/supabase/server";
+import { prisma } from "@/src/lib/prisma";
 
 export type NavbarNotification = {
   id: string;
@@ -12,51 +12,33 @@ export type NavbarNotification = {
   channel?: string | null;
 };
 
-function isMissingNotificationSchemaError(message: string | null | undefined) {
-  return Boolean(
-    message?.includes("notifications") &&
-      (message.includes("schema cache") || message.includes("column"))
-  );
-}
-
 export async function getNavbarNotifications(userId: string) {
-  const supabase = await createClient();
-  const { data, error } = await supabase
-    .from("notifications")
-    .select(
-      "id, report_id, subject, message, status, sent_at, created_at, read_at, channel"
-    )
-    .eq("user_id", userId)
-    .eq("channel", "internal")
-    .order("created_at", { ascending: false })
-    .limit(8);
+  const notifications = await prisma.notification.findMany({
+    where: { userId, channel: "internal" },
+    select: {
+      id: true,
+      reportId: true,
+      subject: true,
+      message: true,
+      status: true,
+      sentAt: true,
+      createdAt: true,
+      readAt: true,
+      channel: true,
+    },
+    orderBy: { createdAt: "desc" },
+    take: 8,
+  });
 
-  if (!error) {
-    return (data ?? []) as NavbarNotification[];
-  }
-
-  if (!isMissingNotificationSchemaError(error.message)) {
-    console.error("Failed to fetch navbar notifications:", error.message);
-    return [];
-  }
-
-  const { data: fallbackData, error: fallbackError } = await supabase
-    .from("notifications")
-    .select("id, report_id, subject, message, status, sent_at, created_at")
-    .eq("user_id", userId)
-    .order("created_at", { ascending: false })
-    .limit(8);
-
-  if (fallbackError) {
-    console.error(
-      "Failed to fetch fallback navbar notifications:",
-      fallbackError.message
-    );
-    return [];
-  }
-
-  return (fallbackData ?? []).map((notification) => ({
-    ...notification,
-    read_at: null,
-  })) as NavbarNotification[];
+  return notifications.map((notification) => ({
+    id: notification.id,
+    report_id: notification.reportId,
+    subject: notification.subject,
+    message: notification.message,
+    status: notification.status,
+    sent_at: notification.sentAt?.toISOString() ?? null,
+    created_at: notification.createdAt.toISOString(),
+    read_at: notification.readAt?.toISOString() ?? null,
+    channel: notification.channel,
+  })) satisfies NavbarNotification[];
 }
