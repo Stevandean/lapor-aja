@@ -494,45 +494,56 @@ lewat sapuan grep penuh `createClient`/`createAdminClient` di seluruh
   perlu diketahui kalau nanti ada rencana punya beberapa versi SLA rule
   per prioritas.
 
-**Landmine 🟡 yang TERSISA (belum dikerjakan, open item):**
-- `notifications/{queries,actions}.ts` — lonceng notifikasi navbar
-  (tampil di SETIAP halaman dashboard, semua role). Beku di data lama,
-  tidak pernah menampilkan notifikasi internal baru yang sekarang dibuat
-  lewat Prisma. Tidak crash, cuma diam-diam selalu basi.
-- `admin/actions/relations.ts` (`linkRelatedReport`,
+**Riwayat landmine 🟡 — Ronde 3 (SELESAI, 2026-09-03 sesi malam) — SEMUA
+landmine split-brain dari sapuan grep `createClient`/`createAdminClient`
+sudah beres:**
+- [x] `notifications/{queries,actions}.ts` — lonceng notifikasi navbar
+  (`getNavbarNotifications`, `markNavbarNotificationsAsRead`), dipanggil
+  di `(dashboard)/layout.tsx` untuk SEMUA role di SETIAP halaman dashboard.
+  Diverifikasi lewat Playwright: alur nyata warga lapor → admin setujui →
+  kepala dusun verifikasi → notifikasi "Verifikasi selesai" langsung
+  muncul di lonceng Admin.
+- [x] `admin/actions/relations.ts` (`linkRelatedReport`,
   `bulkMergeDuplicateReports`, `bulkMarkRecurringReports`) — panel gabung
-  laporan duplikat/berulang di halaman detail laporan Admin. Akan gagal
-  untuk laporan yang dibuat setelah modul `reports/` dipindah.
-- `settings/actions.ts` (`updateOwnProfile` avatar upload) +
-  `app/(dashboard)/layout.tsx` + `settings/queries.ts` — upload & tampilkan
-  foto profil masih lewat `.storage.upload()`/`createSignedUrl` Supabase
-  dengan client anon-key yang sudah tidak punya sesi Auth valid. Beda dari
-  landmine lain: ini kemungkinan **gagal terang-terangan** (pesan error)
-  untuk SEMUA pengguna, bukan cuma diam-diam kosong.
-- `admin/queries/officialLetters.ts` + `admin/actions/officialLetters.ts`
-  — alur draf/finalisasi/kirim Surat Resmi, masih penuh Supabase. Split-brain
-  sama untuk laporan/instansi yang dibuat setelah swap. Jarang dipakai
-  (hanya laporan yang diteruskan ke instansi luar desa).
+  laporan duplikat/berulang di halaman detail laporan Admin. Diverifikasi:
+  2 laporan digabung sebagai duplikat lewat UI, dikonfirmasi ke database
+  (relasi tersimpan, laporan sumber berstatus `merged`).
+- [x] Avatar upload dipindah dari Supabase Storage ke local storage —
+  `settings/actions.ts` (`updateOwnProfile`) sekarang simpan ke
+  `public/uploads/avatars/<user_id>/avatar.<ext>`, sama pola dengan foto
+  laporan/verifikasi/progres. `settings/queries.ts` dan
+  `app/(dashboard)/layout.tsx` dibaca lewat `toDisplayUrl()` lokal,
+  bukan `createSignedUrl` Supabase lagi. Diverifikasi: ganti foto profil
+  lewat UI, foto tampil sebagai `<img>` valid setelah reload, tidak ada
+  pesan error.
+- [x] `admin/queries/officialLetters.ts` + `admin/actions/officialLetters.ts`
+  — alur draf/finalisasi/kirim Surat Resmi (`createOfficialLetter`,
+  `finalizeOfficialLetter`, `sendOfficialLetterEmail`) di-swap ke Prisma.
+  Diverifikasi: buat surat resmi baru untuk laporan `forwarded_to_agency`
+  lewat UI, berhasil (status `draft`, isi teks). **PDF generation SENGAJA
+  TIDAK disentuh di ronde ini** — lihat keputusan di bawah.
 
-**Keputusan baru (2026-09-03): generate PDF surat resmi MASUK cakupan TA**
-— ini fitur baru, BUKAN cuma perbaikan split-brain migrasi. Saat ini
-kolom `pdf_url`/`file_path` di tabel `official_letters` ada di skema tapi
+**Keputusan (2026-09-03, masih berlaku): generate PDF surat resmi MASUK
+cakupan TA** — ini fitur baru, BUKAN cuma perbaikan split-brain migrasi.
+Kolom `pdf_url`/`file_path` di tabel `official_letters` ada di skema tapi
 TIDAK PERNAH diisi kode manapun — surat cuma berupa teks subjek+isi yang
 dikirim sebagai badan email, tidak ada file PDF sungguhan sama sekali.
-**Status: perlu riset pendekatan teknis dulu** (library apa yang dipakai
-untuk generate PDF di Next.js — misal `@react-pdf/renderer`, `pdf-lib`,
-atau render HTML→PDF via headless browser — dan di mana file hasilnya
-disimpan, kemungkinan besar `public/uploads/letters/` mengikuti pola
-lokal yang sudah ada). Belum diputuskan detailnya, jangan mulai
-implementasi sebelum ini didiskusikan.
+**Status: BELUM MULAI dikerjakan sama sekali, perlu riset pendekatan
+teknis dulu** (library apa yang dipakai untuk generate PDF di Next.js —
+misal `@react-pdf/renderer`, `pdf-lib`, atau render HTML→PDF via headless
+browser — dan di mana file hasilnya disimpan, kemungkinan besar
+`public/uploads/letters/` mengikuti pola lokal yang sudah ada). Belum
+diputuskan detailnya, jangan mulai implementasi sebelum ini didiskusikan.
+**Ini satu-satunya open item split-brain/migrasi yang tersisa** — semua
+landmine 🟡 lain (Ronde 1, 2, 3) sudah selesai per catatan di atas.
 
 - [ ] Seed data dummy untuk testing/demo (database MySQL saat ini kosong
   total setelah semua data uji dibersihkan, keputusan sudah diambil untuk
   TIDAK migrasikan data Supabase lama) — belum dikerjakan.
-- [ ] Build 5 cabang fitur baru — belum, menunggu landmine 🟡 yang tersisa
-  di atas selesai (modul inti + 2 ronde landmine sudah full Prisma, tapi
-  masih ada 4 titik split-brain kecil yang tersisa, plus keputusan PDF
-  surat resmi di atas yang perlu diriset dulu).
+- [ ] Build 5 cabang fitur baru — belum, menunggu keputusan PDF surat
+  resmi di atas diriset dan diputuskan dulu (semua landmine split-brain
+  migrasi sudah tuntas, jadi ini sekarang murni soal fitur baru, bukan
+  lagi soal database mana yang benar).
 
 ## Aturan Kerja untuk Claude Code
 
