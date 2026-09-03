@@ -386,9 +386,12 @@ sebagian besar juga diverifikasi via smoke test/E2E browser nyata):**
   yang sama, catat untuk sesi berikutnya.
 - [x] `src/features/admin/queries/{reports,classification,masterData}.ts`
   dan `src/features/admin/actions/{reportLifecycle,classification}.ts` —
-  full Prisma. **BELUM disentuh** (di luar scope E2E test hari ini):
-  `admin/queries/{followUp,officialLetters}.ts`,
-  `admin/actions/{relations,officialLetters}.ts`.
+  full Prisma. **BELUM disentuh saat itu** (di luar scope E2E test hari
+  itu): `admin/queries/followUp.ts` (sudah di-swap Ronde 1),
+  `admin/queries/officialLetters.ts`, `admin/actions/relations.ts`,
+  `admin/actions/officialLetters.ts` (tiga terakhir ini masih Supabase per
+  2026-09-03 — lihat "Landmine 🟡 yang TERSISA" di bawah untuk status
+  terkini, jangan percaya paragraf historis ini untuk status sekarang).
 - [x] `src/features/hamlet-head/queries.ts` + `actions.ts` — full Prisma.
   `verifyReport` sekalian dipindah upload foto verifikasi dari Supabase
   Storage ke lokal: `public/uploads/verifications/<report_id>/
@@ -441,43 +444,95 @@ manapun yang menyentuh komponen ini.
   pre-create). `.gitignore` sudah diatur (`/public/uploads/*` diabaikan,
   `.gitkeep` di root folder dipertahankan).
 
-**Daftar landmine 🟡 yang TERSISA** (turun dari 14 file jadi 3 file, hasil
-grep ulang `profiles` di luar `getProfile()`/`getUser()` per 2026-09-03 —
-tidak lagi memblokir alur inti, karena semuanya di luar jalur "submit →
-admin review → verifikasi → klasifikasi → kasi tangani → selesai" yang
-sudah full Prisma):
-- `admin/queries/followUp.ts` — `getAdminFollowUpReports`,
-  `getAdminArchivedReports` (halaman Tindak Lanjut & Arsip admin)
-- `village/queries/budget.ts` — `getVillageBudgetRequestsData`,
-  `getVillageBudgetRequestDetail` (halaman Peninjauan Anggaran Kepala
-  Desa/Sekdes — berpasangan dengan `village/actions.ts`'s
-  `approveBudgetRequest`/`rejectBudgetRequest` yang juga belum disentuh)
-- `village/queries/reports.ts` — `getVillageArchivedReports`,
-  `getVillageArchivedReportDetail`, `getVillageReportsData`,
-  `getVillageReportMonitoringDetail` (dashboard laporan Kepala Desa/Sekdes)
+**Riwayat landmine 🟡 — Ronde 1 (SELESAI, 2026-09-03 sesi siang):**
+`admin/queries/followUp.ts`, `village/queries/budget.ts` (+
+`village/actions.ts` `approveBudgetRequest`/`rejectBudgetRequest`),
+`village/queries/reports.ts`, dan `village/queries/dashboard.ts` (dashboard
+utama Kepala Desa/Sekdes, ditemukan & diperbaiki sekalian meski tidak
+disebut eksplisit di permintaan awal ronde ini) — semua sudah di-swap ke
+Prisma, termasuk perbaikan pola foto (`createSignedUrl` Supabase Storage
+→ `toDisplayUrl()` lokal) di `village/queries/reports.ts`.
 
-  Ketiganya masih pola sama: nama/email pelapor kosong untuk laporan baru
-  (silent, bukan crash), DAN foto laporan/verifikasi laporan baru (yang
-  sekarang di local storage) akan tampil rusak di halaman-halaman ini
-  karena kodenya masih coba `createSignedUrl` ke Supabase Storage untuk
-  path yang sudah tidak ada di sana — dua alasan sekaligus untuk
-  memprioritaskan swap `village/queries/reports.ts` di sesi berikutnya.
+**Riwayat landmine 🟡 — Ronde 2 (SELESAI, 2026-09-03 sesi sore), ditemukan
+lewat sapuan grep penuh `createClient`/`createAdminClient` di seluruh
+`src/`:**
+- [x] `village/queries/sla.ts` (`getVillageSlaMonitoringData`,
+  `getVillageHeatmapReports`) — halaman Monitoring SLA & Heatmap Kepala
+  Desa/Sekdes. Prioritas tertinggi ronde ini karena langsung berhubungan
+  dengan tema TA. Perhitungan status SLA efektif (`calculateEffectiveSlaStatus`
+  di `src/lib/sla.ts`) TIDAK diubah sama sekali, cuma sumber datanya.
+- [x] `dashboard/queries.ts` (`getAdminDashboardStats`, `getRecentReports`)
+  — dashboard utama **Admin** (`/dashboard/admin`), landmine paling sering
+  diakses karena ini halaman pertama yang dilihat admin setiap login.
+- [x] `citizen/queries.ts` (`getCitizenDashboardData`, `getCitizenReports`,
+  `getCitizenReportDetail`) — tiga halaman "Laporan Saya" milik warga biasa
+  (`/dashboard/public`, `/dashboard/public/reports`,
+  `/dashboard/public/reports/[id]`), sekaligus perbaikan pola foto (sama
+  seperti village). Ini landmine yang paling terlihat langsung oleh
+  masyarakat umum, bukan cuma staf desa.
+- [x] `master-data/queries.ts` + `master-data/actions/{categories,dusuns,
+  agencies,slaRules,villageSections}.ts` — BACA dan TULIS kelima halaman
+  "Kelola Data Master". Sebelumnya split-brain total: form CRUD di halaman
+  ini menulis ke Supabase sementara seluruh bagian lain aplikasi (dropdown
+  klasifikasi laporan, dsb) sudah baca dari Prisma — jadi apa pun yang
+  admin tambah/ubah di sini **tidak pernah** muncul di aplikasi yang
+  sedang jalan. Ini kemungkinan besar alasan tabel `categories`/`dusuns`/
+  `village_sections`/`sla_rules` di MySQL kosong total sebelum ronde ini.
+  Diverifikasi paling meyakinkan: tambah kategori baru lewat UI Kelola
+  Data Master, kategori itu langsung muncul di dropdown klasifikasi
+  laporan Admin (dibuktikan lewat Playwright, dua arah: tersimpan di MySQL
+  DAN terbaca balik oleh Prisma di form lain).
+  **Catatan temuan sampingan** (bukan bug baru, desain lama yang baru
+  ketahuan): `SlaRule.priority` di skema Prisma diberi `@unique` (satu
+  baris per prioritas), tapi logika `toggleSlaRuleStatus` yang asli
+  ditulis dengan asumsi bisa ada beberapa baris SLA per prioritas
+  (nonaktifkan "sibling" saat mengaktifkan salah satu). Karena kolomnya
+  sekarang unik, sibling itu tidak akan pernah ada — efeknya menonaktifkan
+  satu-satunya aturan SLA untuk suatu prioritas akan selalu ditolak oleh
+  pengecekan "harus ada minimal satu aturan aktif". Ini "gagal aman", jadi
+  TIDAK diubah (sesuai aturan jangan ubah logika bisnis saat swap), tapi
+  perlu diketahui kalau nanti ada rencana punya beberapa versi SLA rule
+  per prioritas.
 
-- [ ] Swap sisa modul yang belum disentuh: `village/queries/{reports,
-  budget,dashboard,sla}.ts`, `village/actions.ts` (budget review),
-  `admin/queries/{followUp,officialLetters}.ts`,
-  `admin/actions/{relations,officialLetters}.ts`, `citizen/queries.ts`
-  (belum dicek ulang sesi ini), `master-data/queries.ts`. **WAJIB ikuti
-  "ATURAN TETAP — RLS→otorisasi eksplisit"** untuk setiap tabel yang
-  disentuh.
-- [ ] Perbaiki bug duplicate `id="note"` di `KasiReportActionPanel.tsx`
-  (lihat catatan di atas).
+**Landmine 🟡 yang TERSISA (belum dikerjakan, open item):**
+- `notifications/{queries,actions}.ts` — lonceng notifikasi navbar
+  (tampil di SETIAP halaman dashboard, semua role). Beku di data lama,
+  tidak pernah menampilkan notifikasi internal baru yang sekarang dibuat
+  lewat Prisma. Tidak crash, cuma diam-diam selalu basi.
+- `admin/actions/relations.ts` (`linkRelatedReport`,
+  `bulkMergeDuplicateReports`, `bulkMarkRecurringReports`) — panel gabung
+  laporan duplikat/berulang di halaman detail laporan Admin. Akan gagal
+  untuk laporan yang dibuat setelah modul `reports/` dipindah.
+- `settings/actions.ts` (`updateOwnProfile` avatar upload) +
+  `app/(dashboard)/layout.tsx` + `settings/queries.ts` — upload & tampilkan
+  foto profil masih lewat `.storage.upload()`/`createSignedUrl` Supabase
+  dengan client anon-key yang sudah tidak punya sesi Auth valid. Beda dari
+  landmine lain: ini kemungkinan **gagal terang-terangan** (pesan error)
+  untuk SEMUA pengguna, bukan cuma diam-diam kosong.
+- `admin/queries/officialLetters.ts` + `admin/actions/officialLetters.ts`
+  — alur draf/finalisasi/kirim Surat Resmi, masih penuh Supabase. Split-brain
+  sama untuk laporan/instansi yang dibuat setelah swap. Jarang dipakai
+  (hanya laporan yang diteruskan ke instansi luar desa).
+
+**Keputusan baru (2026-09-03): generate PDF surat resmi MASUK cakupan TA**
+— ini fitur baru, BUKAN cuma perbaikan split-brain migrasi. Saat ini
+kolom `pdf_url`/`file_path` di tabel `official_letters` ada di skema tapi
+TIDAK PERNAH diisi kode manapun — surat cuma berupa teks subjek+isi yang
+dikirim sebagai badan email, tidak ada file PDF sungguhan sama sekali.
+**Status: perlu riset pendekatan teknis dulu** (library apa yang dipakai
+untuk generate PDF di Next.js — misal `@react-pdf/renderer`, `pdf-lib`,
+atau render HTML→PDF via headless browser — dan di mana file hasilnya
+disimpan, kemungkinan besar `public/uploads/letters/` mengikuti pola
+lokal yang sudah ada). Belum diputuskan detailnya, jangan mulai
+implementasi sebelum ini didiskusikan.
+
 - [ ] Seed data dummy untuk testing/demo (database MySQL saat ini kosong
   total setelah semua data uji dibersihkan, keputusan sudah diambil untuk
   TIDAK migrasikan data Supabase lama) — belum dikerjakan.
-- [ ] Build 5 cabang fitur baru — belum, menunggu swap data layer selesai
-  total (modul inti sudah selesai, tapi masih ada modul lain yang perlu
-  diselesaikan dulu supaya tidak ada split-brain tersisa)
+- [ ] Build 5 cabang fitur baru — belum, menunggu landmine 🟡 yang tersisa
+  di atas selesai (modul inti + 2 ronde landmine sudah full Prisma, tapi
+  masih ada 4 titik split-brain kecil yang tersisa, plus keputusan PDF
+  surat resmi di atas yang perlu diriset dulu).
 
 ## Aturan Kerja untuk Claude Code
 
