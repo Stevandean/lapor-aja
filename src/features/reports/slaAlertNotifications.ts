@@ -5,7 +5,7 @@ import { prisma } from "@/src/lib/prisma";
 import type { Prisma, UserRole } from "@prisma/client";
 import { sendWhatsvaMessage } from "@/src/lib/whatsapp/whatsva";
 
-type SlaAlertType = "at_risk" | "overdue";
+type SlaAlertType = "at_risk" | "critical" | "overdue";
 
 type SlaAlertReport = {
   id: string;
@@ -137,7 +137,9 @@ export async function sendSlaAlertNotifications({
     }))
     .filter(
       (item): item is { report: SlaAlertReport; alertType: SlaAlertType } =>
-        item.alertType === "at_risk" || item.alertType === "overdue"
+        item.alertType === "at_risk" ||
+        item.alertType === "critical" ||
+        item.alertType === "overdue"
     );
 
   if (alertReports.length === 0) {
@@ -498,7 +500,15 @@ Mohon segera lakukan pengecekan pada dashboard SLA Monitoring.
 }
 
 function getSlaAlertLabel(alertType: SlaAlertType) {
-  return alertType === "overdue" ? "Melewati Tenggat" : "Berisiko";
+  if (alertType === "overdue") {
+    return "Melewati Tenggat";
+  }
+
+  if (alertType === "critical") {
+    return "Kritis";
+  }
+
+  return "Berisiko";
 }
 
 function getReportAddress(report: SlaAlertReport) {

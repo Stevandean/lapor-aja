@@ -721,6 +721,13 @@ model ReportSlaAlertNotification {
   report    Report   @relation(fields: [reportId], references: [id])
   triggerer Profile? @relation(fields: [triggeredBy], references: [id])
 
+  // Satu alert per laporan PER level (report_id + alert_type), BUKAN per
+  // escalation_level — escalation_level cuma menentukan siapa yang
+  // diberitahu (Cabang 2), bukan level keparahan itu sendiri. Kalau
+  // escalation_level ikut dimasukkan ke constraint ini, saat Cabang 2
+  // membuat escalation_level bervariasi, level keparahan yang sama bisa
+  // tercatat berkali-kali dan idempotensi ini jadi tidak berguna.
+  @@unique([reportId, alertType])
   @@map("report_sla_alert_notifications")
 }
 
