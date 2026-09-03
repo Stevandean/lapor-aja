@@ -1,4 +1,10 @@
-import { AlertTriangle, ClipboardList, GitMerge, PauseCircle } from "lucide-react";
+import {
+  AlertOctagon,
+  AlertTriangle,
+  ClipboardList,
+  GitMerge,
+  PauseCircle,
+} from "lucide-react";
 import { Badge } from "@/src/components/ui/Badge";
 import {
   REPORT_STATUS_BADGE_CLASSES,
@@ -186,6 +192,15 @@ function SlaBadge({ value }: { value: string | null }) {
       <Badge className="bg-warning-50 text-warning-700">
         <AlertTriangle className="mr-1 h-3 w-3" />
         Berisiko
+      </Badge>
+    );
+  }
+
+  if (value === "critical") {
+    return (
+      <Badge className="bg-critical-50 text-critical-700">
+        <AlertOctagon className="mr-1 h-3 w-3" />
+        Kritis
       </Badge>
     );
   }

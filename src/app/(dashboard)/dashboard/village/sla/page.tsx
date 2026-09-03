@@ -1,6 +1,7 @@
 import Link from "next/link";
 import {
   ArrowLeft,
+  AlertOctagon,
   AlertTriangle,
   CheckCircle2,
   Clock3,
@@ -25,6 +26,7 @@ export default async function VillageSlaPage() {
 
   const onTimeCount = getCount(slaStats, "on_time");
   const atRiskCount = getCount(slaStats, "at_risk");
+  const criticalCount = getCount(slaStats, "critical");
   const overdueCount = getCount(slaStats, "overdue");
   const completedCount = getCount(slaStats, "completed");
   const pausedBudgetCount = getCount(slaStats, "paused_budget");
@@ -68,7 +70,7 @@ export default async function VillageSlaPage() {
         </div>
       )}
 
-      <section className="grid gap-4 sm:grid-cols-2 xl:grid-cols-7">
+      <section className="grid gap-4 sm:grid-cols-2 xl:grid-cols-8">
         <VillageStatCard
           title="Total Laporan"
           value={totalReports}
@@ -88,6 +90,13 @@ export default async function VillageSlaPage() {
           value={atRiskCount}
           description="Laporan yang mendekati batas SLA."
           icon={<AlertTriangle className="h-5 w-5" />}
+        />
+
+        <VillageStatCard
+          title="Kritis"
+          value={criticalCount}
+          description="Laporan yang hampir melewati batas SLA."
+          icon={<AlertOctagon className="h-5 w-5" />}
         />
 
         <VillageStatCard

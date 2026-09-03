@@ -579,6 +579,7 @@ function formatEnum(value: string | null) {
     belum_ditentukan: "Belum Ditentukan",
     on_time: "Tepat Waktu",
     at_risk: "Berisiko",
+    critical: "Kritis",
     overdue: "Terlambat",
     paused: "Dijeda",
     completed: "Selesai",

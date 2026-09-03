@@ -1,6 +1,7 @@
 export type EffectiveSlaStatus =
   | "on_time"
   | "at_risk"
+  | "critical"
   | "overdue"
   | "completed"
   | "paused_budget"
@@ -13,6 +14,14 @@ const SLA_COMPLETED_STATUSES = [
   "rejected",
   "verified_invalid",
 ];
+
+// Cabang 1a: 4 level Aman/Peringatan/Kritis/Terlambat berdasarkan persentase
+// waktu terpakai dari total durasi SLA (created_at -> resolution_due_at).
+// Threshold 60/85 (bukan 75/90) sengaja dipilih supaya "Peringatan" muncul
+// lebih awal, memberi waktu bertindak sebelum masuk fase "Kritis" — lihat
+// CLAUDE.md bagian Cabang 1 untuk rasionalisasi lengkap.
+const AT_RISK_ELAPSED_THRESHOLD = 0.6;
+const CRITICAL_ELAPSED_THRESHOLD = 0.85;
 
 export type SlaReportSnapshot = {
   status: string;
@@ -56,15 +65,18 @@ export function calculateEffectiveSlaStatus(
   }
 
   const totalDuration = resolutionDueAt.getTime() - createdAt.getTime();
-  const remainingDuration = resolutionDueAt.getTime() - now.getTime();
 
   if (totalDuration <= 0) {
-    return "at_risk";
+    return "critical";
   }
 
-  const riskThreshold = totalDuration * 0.25;
+  const elapsedFraction = (now.getTime() - createdAt.getTime()) / totalDuration;
 
-  if (remainingDuration <= riskThreshold) {
+  if (elapsedFraction >= CRITICAL_ELAPSED_THRESHOLD) {
+    return "critical";
+  }
+
+  if (elapsedFraction >= AT_RISK_ELAPSED_THRESHOLD) {
     return "at_risk";
   }
 
