@@ -51,6 +51,7 @@ export function VillagePerformanceFilterBar({
       <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-[1fr_1fr_auto]">
         <Select
           label="Jenis Periode"
+          name="tipe"
           value={periodType}
           onChange={(event) => updateParam("tipe", event.target.value)}
         >
@@ -60,6 +61,7 @@ export function VillagePerformanceFilterBar({
 
         <Select
           label="Periode"
+          name="periode"
           value={String(offset)}
           onChange={(event) => updateParam("periode", event.target.value)}
         >
