@@ -32,16 +32,18 @@ legal, web pembanding):
 Semua fitur berikut **WAJIB** dikerjakan (bukan opsional), didesain rule-based
 (bukan machine learning) sesuai prinsip teknologi tepat guna.
 
-### Cabang 1 — Deteksi & Klasifikasi Waktu
+### Cabang 1 — Deteksi & Klasifikasi Waktu — **SELESAI TOTAL (2026-09-04)**
 - [x] **1a. SELESAI (2026-09-03)** — Klasifikasi status waktu otomatis 4
   level **Aman (on_time) → Peringatan (at_risk) → Kritis (critical) →
   Terlambat (overdue)**. Detail implementasi & rasionalisasi threshold ada
   di "Progres Sejauh Ini" bagian "FASE FITUR BARU" di bawah.
-- 1b. Ambang batas SLA per kategori laporan (saat ini SLA cuma berbasis
-  priority via tabel `sla_rules`, belum ada override per kategori) —
-  BELUM dikerjakan.
-- 1c. Perhitungan SLA berbasis hari kerja (mengecualikan akhir pekan/libur)
-  — BELUM dikerjakan.
+- [x] **1b. SELESAI (2026-09-04)** — Ambang batas SLA per kategori laporan,
+  opsional, menggantikan mutlak aturan priority kalau ada. Detail di
+  "Progres Sejauh Ini".
+- [x] **1c. SELESAI (2026-09-04)** — Perhitungan tenggat SLA berbasis hari
+  kerja (melompati Sabtu/Minggu + hari libur nasional), berlaku global
+  untuk semua laporan (bukan opsional per kategori). Detail di "Progres
+  Sejauh Ini".
 
 ### Cabang 2 — Notifikasi & Eskalasi
 - 2a. Notifikasi bertingkat sesuai level eskalasi: level 1 → Kasi
@@ -618,10 +620,86 @@ Kritis/Terlambat):
   kartu statistik tampil benar di kolom yang tepat. Data uji dibersihkan
   total setelahnya.
 
-Cabang 1b (ambang batas SLA per kategori) dan 1c (perhitungan berbasis
-hari kerja) — **BELUM dikerjakan**, menyusul di sesi berikutnya.
+**Cabang 1b & 1c — SELESAI (2026-09-04 sesi sore/malam), dikerjakan
+sekaligus karena keduanya sama-sama landing di titik kode yang sama
+(`approveReportForVerification`)**, plus 4 keputusan desain yang perlu
+dicatat di sini karena relevan buat sidang:
 
-- [ ] Lanjutkan Cabang 1b & 1c, lalu Cabang 2-5 — belum dikerjakan.
+- **KEPUTUSAN 1 — kategori override MENGGANTIKAN MUTLAK aturan priority,
+  bukan dikombinasikan.** Kalau kategori laporan punya baris di
+  `sla_category_thresholds`, prioritas yang dipilih admin (rendah/sedang/
+  tinggi/darurat) tetap disimpan untuk klasifikasi tapi **sama sekali
+  tidak** dipakai untuk hitung durasi SLA — durasi dari kategori menang
+  penuh. Alasan: `SlaCategoryThreshold` sejak awal didesain `@@unique
+  ([categoryId])`, satu baris per kategori tanpa dimensi priority sama
+  sekali — desain itu sudah mengisyaratkan "kategori menang mutlak"
+  sebelum implementasi dimulai, jadi dikonfirmasi eksplisit sebagai
+  keputusan resmi, bukan cuma tafsir kode.
+- **KEPUTUSAN 2 — hari kerja SELALU aktif, bukan opsional per kategori.**
+  Kolom `use_business_days` yang tadinya ada di `sla_category_thresholds`
+  (dari desain awal migrasi) **dihapus** lewat migration baru
+  (`prisma/migrations/20260904163526_add_national_holidays_drop_category_business_days/`).
+  Alasan: kalkulasi hari kerja adalah aturan universal yang berlaku sama
+  untuk semua laporan tanpa kecuali — punya toggle per kategori cuma
+  menambah kerumitan tanpa ada kebutuhan nyata untuk mematikannya
+  sebagian.
+- **KEPUTUSAN 3 — sumber hari libur nasional.** Model baru
+  `NationalHoliday` (date unik, description), diseed lewat
+  `prisma/seedNationalHolidays.mjs` (bisa dijalankan ulang untuk tahun
+  berikutnya). **2026: 17 hari resmi dari SKB 3 Menteri** (ditetapkan 19
+  September 2025, dicek langsung ke setneg.go.id). **2027: 17 hari
+  PERKIRAAN** — SKB resmi 2027 belum terbit saat data ini disusun, jadi
+  tanggal hari raya lunar (Imlek/Nyepi/Idul Fitri/Idul Adha/Waisak/
+  Maulid/1 Muharam) dan Paskah dihitung mengikuti pola pergeseran tahun
+  sebelumnya, ditandai `(perkiraan)` di tiap baris kode. **Perlu di-update
+  begitu SKB 2027 resmi terbit** — cek ulang tanggalnya sebelum sidang
+  kalau masih pakai data ini.
+- **KEPUTUSAN 4 — algoritma hitung mundur per jam, basis UTC.**
+  `calculateBusinessAwareDueDate()` (`src/lib/sla.ts`) bergerak maju per
+  jam dari waktu mulai, melompati jam yang jatuh di hari
+  Sabtu/Minggu/tanggal `NationalHoliday`. Perbandingan hari SENGAJA pakai
+  komponen UTC (bukan waktu lokal server) supaya hasilnya deterministik
+  di mana pun kode dijalankan (mesin dev WIB vs kemungkinan deploy production
+  yang defaultnya UTC) — dijelaskan lengkap di komentar fungsi. Berlaku
+  untuk **verification_due_at DAN resolution_due_at** sekaligus.
+  `extendDueDateByPauseWindow()` di `village/actions.ts` (pergeseran
+  tenggat karena jeda anggaran) **SENGAJA TIDAK disentuh** — itu konteks
+  berbeda, bukan kalkulasi dari jam SLA.
+
+**Implementasi:** `approveReportForVerification`
+(`admin/actions/reportLifecycle.ts`) sekarang: (1) cek dulu
+`slaCategoryThreshold` untuk kategori yang dipilih — kalau ada, pakai
+durasinya dan lewati lookup `SlaRule` sepenuhnya; kalau tidak ada,
+fallback ke `SlaRule` by priority seperti sebelumnya; (2) durasi final
+(dari sumber manapun) dihitung jadi `verification_due_at`/
+`resolution_due_at` lewat `calculateBusinessAwareDueDate()`, bukan
+`now + jam` mentah lagi. Catatan audit `report_sla_events` juga jujur
+soal sumber durasinya ("berdasarkan ambang batas khusus kategori" vs
+"untuk prioritas X"). Form Kelola Data Master > Kategori
+(`master-data/components/{CategoryCreateModal,CategoryTable}.tsx`) dapat
+2 field opsional "Durasi verifikasi khusus (jam)" dan "Durasi
+penyelesaian khusus (jam)" — kosong = pakai priority, diisi keduanya =
+upsert baris `sla_category_thresholds`, keduanya dikosongkan lagi saat
+edit = baris terhapus. Model `Category.slaThreshold` juga dirapikan dari
+`SlaCategoryThreshold[]` jadi relasi 1-ke-1 yang sebenarnya (constraint
+`@@unique([categoryId])` di database sudah menjaminnya sejak awal, ini
+cuma perbaikan tipe Prisma Client, tidak perlu migration).
+
+**Diverifikasi dengan data nyata lewat browser (Playwright)**: dusun +
+2 kategori uji dibuat lewat UI Kelola Data Master (satu diisi override
+6 jam verifikasi/24 jam penyelesaian, satu dibiarkan kosong). Laporan
+dengan kategori override di-approve dengan priority "tinggi" (yang
+seharusnya 48/96 jam) dipilih SENGAJA salah — hasilnya tetap 24 jam
+penyelesaian, membuktikan override menang mutlak. Laporan dengan
+kategori biasa + priority "tinggi" tetap pakai 96 jam (fallback jalan).
+Approval dilakukan Jumat 4 September 2026 09:54 UTC — kedua tenggat
+terbukti melompati akhir pekan penuh: yang 24 jam jatuh ke **Senin** (bukan
+Sabtu kalau dihitung mentah), yang 96 jam jatuh ke **Kamis** (bukan Selasa
+kalau dihitung mentah) — dikonfirmasi lewat perhitungan referensi
+independen yang cuma beda ~150 milidetik (waktu round-trip query) dari
+hasil aktual. Data uji dibersihkan total setelahnya.
+
+- [ ] Cabang 2-5 — belum dikerjakan, menyusul di sesi berikutnya.
 
 ## Aturan Kerja untuk Claude Code
 
