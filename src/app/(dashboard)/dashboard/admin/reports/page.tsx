@@ -1,5 +1,3 @@
-import { Download, Filter } from "lucide-react";
-import { Button } from "@/src/components/ui/Button";
 import {
   Card,
   CardContent,
@@ -7,11 +5,38 @@ import {
   CardHeader,
   CardTitle,
 } from "@/src/components/ui/Card";
+import { AdminReportFilterBar } from "@/src/features/admin/components/AdminReportFilterBar";
 import { AdminReportTable } from "@/src/features/admin/components/AdminReportTable";
-import { getAdminReports } from "@/src/features/admin/queries";
+import {
+  getAdminReportReviewOptions,
+  getAdminReports,
+  getActiveVillageSections,
+} from "@/src/features/admin/queries";
 
-export default async function AdminReportsPage() {
-  const reports = await getAdminReports();
+type AdminReportsPageProps = {
+  searchParams: Promise<{
+    dusun?: string;
+    kategori?: string;
+    seksi?: string;
+    sla?: string;
+  }>;
+};
+
+export default async function AdminReportsPage({
+  searchParams,
+}: AdminReportsPageProps) {
+  const params = await searchParams;
+
+  const [{ categories, hamlets }, sections, reports] = await Promise.all([
+    getAdminReportReviewOptions(),
+    getActiveVillageSections(),
+    getAdminReports({
+      dusunId: params.dusun,
+      categoryId: params.kategori,
+      sectionId: params.seksi,
+      slaStatus: params.sla,
+    }),
+  ]);
 
   return (
     <div className="space-y-6">
@@ -28,19 +53,13 @@ export default async function AdminReportsPage() {
             masuk ke sistem.
           </p>
         </div>
-
-        <div className="flex flex-wrap gap-3">
-          <Button variant="outline">
-            <Filter className="mr-2 h-4 w-4" />
-            Saring
-          </Button>
-
-          <Button variant="outline">
-            <Download className="mr-2 h-4 w-4" />
-            Ekspor
-          </Button>
-        </div>
       </section>
+
+      <AdminReportFilterBar
+        categories={categories}
+        dusuns={hamlets}
+        sections={sections}
+      />
 
       <Card>
         <CardHeader>

@@ -1,6 +1,9 @@
 import { prisma } from "@/src/lib/prisma";
-import type { ReportStatus } from "@prisma/client";
+import type { Prisma, ReportStatus } from "@prisma/client";
+import { calculateEffectiveSlaStatus } from "@/src/lib/sla";
 import { LIST_LIMIT } from "./shared";
+
+const FILTER_POOL_LIMIT = 200;
 
 const ACTIVE_RELATION_STATUSES: ReportStatus[] = [
   "pending",
@@ -17,8 +20,35 @@ function toDisplayUrl(filePath: string | null | undefined) {
   return filePath && filePath.startsWith("/") ? filePath : null;
 }
 
-export async function getAdminReports() {
+export type AdminReportFilters = {
+  dusunId?: string;
+  categoryId?: string;
+  sectionId?: string;
+  slaStatus?: string;
+};
+
+// Cabang 2b: dusun/kategori/seksi difilter langsung di database (kolom
+// asli), status SLA dihitung on-the-fly (bukan kolom database, lihat
+// src/lib/sla.ts) jadi disaring belakangan di JS. Ambil pool lebih besar
+// dari LIST_LIMIT supaya penyaringan status SLA tidak kehabisan baris
+// sebelum sempat di-slice ke jumlah tampil akhir.
+export async function getAdminReports(filters: AdminReportFilters = {}) {
+  const where: Prisma.ReportWhereInput = {};
+
+  if (filters.dusunId) {
+    where.dusunId = filters.dusunId;
+  }
+
+  if (filters.categoryId) {
+    where.categoryId = filters.categoryId;
+  }
+
+  if (filters.sectionId) {
+    where.assignedSectionId = filters.sectionId;
+  }
+
   const reports = await prisma.report.findMany({
+    where,
     select: {
       id: true,
       reportNumber: true,
@@ -29,26 +59,49 @@ export async function getAdminReports() {
       authorityLevel: true,
       followUpType: true,
       createdAt: true,
+      resolutionDueAt: true,
+      resolvedAt: true,
       category: { select: { name: true } },
       dusun: { select: { name: true } },
+      assignedSection: { select: { id: true, name: true } },
     },
     orderBy: { createdAt: "desc" },
-    take: LIST_LIMIT,
+    take: FILTER_POOL_LIMIT,
   });
 
-  return reports.map((report) => ({
-    id: report.id,
-    report_number: report.reportNumber,
-    title: report.title,
-    status: report.status,
-    priority: report.priority,
-    asset_status: report.assetStatus,
-    authority_level: report.authorityLevel,
-    follow_up_type: report.followUpType,
-    created_at: report.createdAt.toISOString(),
-    categories: report.category ? [report.category] : null,
-    dusuns: report.dusun ? [report.dusun] : null,
-  }));
+  const mapped = reports.map((report) => {
+    const createdAtIso = report.createdAt.toISOString();
+    const resolutionDueAtIso = report.resolutionDueAt?.toISOString() ?? null;
+    const resolvedAtIso = report.resolvedAt?.toISOString() ?? null;
+
+    return {
+      id: report.id,
+      report_number: report.reportNumber,
+      title: report.title,
+      status: report.status,
+      priority: report.priority,
+      asset_status: report.assetStatus,
+      authority_level: report.authorityLevel,
+      follow_up_type: report.followUpType,
+      created_at: createdAtIso,
+      resolution_due_at: resolutionDueAtIso,
+      sla_status: calculateEffectiveSlaStatus({
+        status: report.status,
+        created_at: createdAtIso,
+        resolution_due_at: resolutionDueAtIso,
+        resolved_at: resolvedAtIso,
+      }),
+      categories: report.category ? [report.category] : null,
+      dusuns: report.dusun ? [report.dusun] : null,
+      section: report.assignedSection,
+    };
+  });
+
+  const filtered = filters.slaStatus
+    ? mapped.filter((report) => report.sla_status === filters.slaStatus)
+    : mapped;
+
+  return filtered.slice(0, LIST_LIMIT);
 }
 
 export async function getAdminReportDetail(reportId: string) {

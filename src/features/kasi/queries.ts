@@ -2,6 +2,7 @@ import { redirect } from "next/navigation";
 import { getProfile } from "@/src/lib/auth/getProfile";
 import { getDashboardRouteByRole, ROUTES } from "@/src/lib/constants/routes";
 import { prisma } from "@/src/lib/prisma";
+import { calculateEffectiveSlaStatus } from "@/src/lib/sla";
 
 const LIST_LIMIT = 50;
 
@@ -39,10 +40,16 @@ function mapReportRow(report: {
   followUpType: string;
   updatedAt: Date;
   createdAt: Date;
+  resolutionDueAt: Date | null;
+  resolvedAt: Date | null;
   category: { name: string } | null;
   dusun: { name: string } | null;
   reporter: { fullName: string; email: string; phoneNumber: string | null } | null;
 }) {
+  const createdAtIso = report.createdAt.toISOString();
+  const resolutionDueAtIso = report.resolutionDueAt?.toISOString() ?? null;
+  const resolvedAtIso = report.resolvedAt?.toISOString() ?? null;
+
   return {
     id: report.id,
     report_number: report.reportNumber,
@@ -52,7 +59,15 @@ function mapReportRow(report: {
     priority: report.priority,
     follow_up_type: report.followUpType,
     updated_at: report.updatedAt.toISOString(),
-    created_at: report.createdAt.toISOString(),
+    created_at: createdAtIso,
+    resolution_due_at: resolutionDueAtIso,
+    resolved_at: resolvedAtIso,
+    sla_status: calculateEffectiveSlaStatus({
+      status: report.status,
+      created_at: createdAtIso,
+      resolution_due_at: resolutionDueAtIso,
+      resolved_at: resolvedAtIso,
+    }),
     category: report.category,
     hamlet: report.dusun,
     reporter: report.reporter
@@ -75,6 +90,8 @@ const assignedReportSelect = {
   followUpType: true,
   updatedAt: true,
   createdAt: true,
+  resolutionDueAt: true,
+  resolvedAt: true,
   category: { select: { name: true } },
   dusun: { select: { name: true } },
   reporter: { select: { fullName: true, email: true, phoneNumber: true } },

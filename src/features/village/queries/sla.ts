@@ -46,6 +46,7 @@ export async function getVillageSlaMonitoringData() {
       updatedAt: true,
       category: { select: { name: true } },
       dusun: { select: { name: true } },
+      assignedSection: { select: { id: true, name: true } },
     },
     orderBy: { updatedAt: "desc" },
   });
@@ -74,6 +75,7 @@ export async function getVillageSlaMonitoringData() {
       updated_at: report.updatedAt.toISOString(),
       category: report.category,
       hamlet: report.dusun,
+      section: report.assignedSection,
     };
   });
 

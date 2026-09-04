@@ -1,6 +1,7 @@
 import Link from "next/link";
 import { ArrowRight, ClipboardList } from "lucide-react";
 import { Badge } from "@/src/components/ui/Badge";
+import { SlaStatusBadge } from "@/src/features/reports/components/SlaStatusBadge";
 import {
   REPORT_STATUS_BADGE_CLASSES,
   REPORT_STATUS_LABELS,
@@ -21,8 +22,10 @@ type AdminReport = {
   authority_level: string;
   follow_up_type: string;
   created_at: string;
+  sla_status?: string | null;
   categories: RelationName[] | null;
   dusuns: RelationName[] | null;
+  section?: RelationName | null;
   relation_summary?: RelationSummary;
 };
 
@@ -59,7 +62,7 @@ export function AdminReportTable({ reports }: AdminReportTableProps) {
   return (
     <div className="overflow-hidden rounded-2xl border border-border bg-card">
       <div className="hidden overflow-x-auto lg:block">
-        <table className="w-full min-w-[900px] text-left text-sm">
+        <table className="w-full min-w-[1050px] text-left text-sm">
           <thead className="border-b border-border bg-muted/60 text-xs uppercase tracking-wide text-muted-foreground">
             <tr>
               <th className="px-5 py-4 font-semibold">Laporan</th>
@@ -67,6 +70,7 @@ export function AdminReportTable({ reports }: AdminReportTableProps) {
               <th className="px-5 py-4 font-semibold">Dusun</th>
               <th className="px-5 py-4 font-semibold">Prioritas</th>
               <th className="px-5 py-4 font-semibold">Status</th>
+              <th className="px-5 py-4 font-semibold">Status SLA</th>
               <th className="px-5 py-4 font-semibold">Dibuat</th>
               <th className="px-5 py-4 font-semibold text-right">Aksi</th>
             </tr>
@@ -112,6 +116,10 @@ export function AdminReportTable({ reports }: AdminReportTableProps) {
                   </Badge>
                 </td>
 
+                <td className="px-5 py-4">
+                  <SlaStatusBadge value={report.sla_status ?? null} />
+                </td>
+
                 <td className="px-5 py-4 text-muted-foreground">
                   {formatDate(report.created_at)}
                 </td>
@@ -145,6 +153,10 @@ export function AdminReportTable({ reports }: AdminReportTableProps) {
                 <RelationBadges summary={report.relation_summary} />
               </div>
 
+              <SlaStatusBadge value={report.sla_status ?? null} />
+            </div>
+
+            <div className="mt-3 flex flex-wrap gap-2">
               <Badge
                 className={
                   REPORT_STATUS_BADGE_CLASSES[report.status] ??
