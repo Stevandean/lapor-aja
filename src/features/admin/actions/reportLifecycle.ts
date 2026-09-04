@@ -7,6 +7,7 @@ import type { ActionState } from "@/src/types/action";
 import { createReportStatusLog } from "@/src/features/reports/statusLogs";
 import { recordSlaEvent } from "@/src/features/reports/slaEvents";
 import { notifyHamletHeadsForVerification } from "@/src/features/reports/internalNotifications";
+import { calculateBusinessAwareDueDate, toUtcDateKey } from "@/src/lib/sla";
 import { requireAdmin } from "./shared";
 
 export async function approveReportForVerification(
@@ -35,28 +36,62 @@ export async function approveReportForVerification(
     };
   }
 
-  const slaRule = await prisma.slaRule.findFirst({
-    where: { priority: priority as ReportPriority, isActive: true },
+  // Cabang 1b: override per kategori MENGGANTIKAN MUTLAK aturan priority
+  // kalau ada baris untuk kategori ini — priority tetap wajib dipilih
+  // (dipakai untuk klasifikasi laporan), tapi tidak dipakai untuk durasi
+  // SLA sama sekali selama override ada.
+  const categoryThreshold = await prisma.slaCategoryThreshold.findUnique({
+    where: { categoryId },
     select: { verificationHours: true, resolutionHours: true },
-    orderBy: { updatedAt: "desc" },
   });
 
-  if (!slaRule) {
-    return {
-      status: "error",
-      message:
-        "Prioritas yang dipilih tidak tersedia. Pilih prioritas SLA yang aktif.",
-    };
+  let verificationHours: number;
+  let resolutionHours: number;
+  let durationSourceNote: string;
+
+  if (categoryThreshold) {
+    verificationHours = categoryThreshold.verificationHours;
+    resolutionHours = categoryThreshold.resolutionHours;
+    durationSourceNote = "berdasarkan ambang batas khusus kategori laporan";
+  } else {
+    const slaRule = await prisma.slaRule.findFirst({
+      where: { priority: priority as ReportPriority, isActive: true },
+      select: { verificationHours: true, resolutionHours: true },
+      orderBy: { updatedAt: "desc" },
+    });
+
+    if (!slaRule) {
+      return {
+        status: "error",
+        message:
+          "Prioritas yang dipilih tidak tersedia. Pilih prioritas SLA yang aktif.",
+      };
+    }
+
+    verificationHours = slaRule.verificationHours;
+    resolutionHours = slaRule.resolutionHours;
+    durationSourceNote = `untuk prioritas ${priority}`;
   }
+
+  // Cabang 1c: tenggat dihitung dengan melompati akhir pekan & hari libur
+  // nasional, bukan lagi `now + jam` mentah.
+  const holidays = await prisma.nationalHoliday.findMany({
+    select: { date: true },
+  });
+  const holidayDateKeys = new Set(holidays.map((holiday) => toUtcDateKey(holiday.date)));
 
   const now = new Date();
 
-  const verificationDueAt = new Date(
-    now.getTime() + slaRule.verificationHours * 60 * 60 * 1000
+  const verificationDueAt = calculateBusinessAwareDueDate(
+    now,
+    verificationHours,
+    holidayDateKeys
   );
 
-  const resolutionDueAt = new Date(
-    now.getTime() + slaRule.resolutionHours * 60 * 60 * 1000
+  const resolutionDueAt = calculateBusinessAwareDueDate(
+    now,
+    resolutionHours,
+    holidayDateKeys
   );
 
   let approvedReport: { id: string; reportNumber: string; title: string };
@@ -94,7 +129,7 @@ export async function approveReportForVerification(
     reportId,
     eventType: "deadline_started",
     newResolutionDueAt: resolutionDueAt.toISOString(),
-    note: `SLA dimulai untuk prioritas ${priority}.`,
+    note: `SLA dimulai ${durationSourceNote}.`,
   });
 
   await notifyHamletHeadsForVerification({
