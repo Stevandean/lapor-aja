@@ -56,13 +56,21 @@ Semua fitur berikut **WAJIB** dikerjakan (bukan opsional), didesain rule-based
   badge status SLA + filter, **BUKAN halaman baru** — lihat rasionalisasi
   di "Progres Sejauh Ini".
 
-### Cabang 3 — Evaluasi Kinerja (belum ada sama sekali di kode)
-- 3a. Dashboard evaluasi kinerja per periode (persentase tepat waktu vs
-  terlambat, tren antar periode)
-- 3b. Dashboard evaluasi kinerja per dusun & kategori
-- 3c. Predikat kinerja terbaik (badge otomatis per Kasi/dusun/kategori,
-  syarat minimum jumlah laporan supaya adil, framing apresiasi bukan
-  kompetisi)
+### Cabang 3 — Evaluasi Kinerja — **SELESAI (2026-09-04)**
+- [x] **3a. SELESAI** — Dashboard evaluasi kinerja per periode (bulanan/
+  triwulanan): total selesai, jumlah+persen tepat waktu vs terlambat,
+  rata-rata jam penyelesaian, chart tren antar periode. Live query dari
+  `Report`, TIDAK pakai `PerformanceSnapshot`. Detail di "Progres Sejauh
+  Ini".
+- [x] **3b. SELESAI** — Breakdown yang sama dipecah **per seksi dan per
+  kategori** (bukan per dusun seperti disebut di draf awal cabang ini —
+  ini keputusan eksplisit pengguna saat memberi instruksi tugas sesi ini,
+  konsisten dengan keputusan 3c yang juga per seksi, bukan penyimpangan
+  tanpa arahan).
+- [x] **3c. SELESAI** — Predikat kinerja terbaik **per seksi** (BUKAN per
+  Kasi individu — lihat rasionalisasi penting di "Progres Sejauh Ini"),
+  syarat minimum 3 laporan, skor komposit 70% tepat waktu + 30% kecepatan,
+  disimpan sebagai `PerformanceSnapshot`, di-generate manual lewat tombol.
 
 ### Cabang 4 — Transparansi & Akuntabilitas
 - 4a. Riwayat jejak waktu (audit trail) — SUDAH ADA via `report_status_logs`
@@ -764,7 +772,155 @@ sama seperti dipakai 2a untuk memutuskan siapa yang dialert):
   browser, terbukti benar-benar menyaring jumlah baris (bukan dekorasi
   seperti tombol lama). Data uji dibersihkan total setelahnya.
 
-- [ ] Cabang 3-5 — belum dikerjakan, menyusul di sesi berikutnya.
+**Cabang 3 — SELESAI (2026-09-04 sesi lanjutan)**, Evaluasi Kinerja.
+Karakter fase ini beda dari Cabang 1/2: bukan cuma logic baru di jalur yang
+sudah ada, tapi 2 model skema baru (`PerformanceSnapshot` didesain ulang
+total) DAN data historis dummy — dikerjakan lewat 6 tugas berurutan.
+
+- **KEPUTUSAN 1 — skema PerformanceSnapshot didesain ulang SEBELUM
+  implementasi, per-SEKSI bukan per-Kasi individu.** Enum
+  `PerformanceScope.kasi` diganti `seksi`, kolom `profileId` **dihapus**
+  total dari skema (migration
+  `prisma/migrations/20260904213806_performance_snapshot_per_seksi/`,
+  aman karena tabelnya masih kosong — 0 baris dicek sebelum migrate).
+  **Alasan teknis yang jadi dasar keputusan ini (WAJIB bisa dijelaskan
+  ulang saat sidang kalau ditanya "kenapa bukan per Kasi?")**: diinvestigasi
+  dulu sebelum keputusan diambil, ditemukan 2 fakta penting di skema yang
+  sudah ada —
+  1. `ReportSectionAssignment.assignedTo` (kolom yang SEHARUSNYA jadi
+     penanda "Kasi individu mana yang menangani laporan ini") **tidak
+     pernah diisi oleh kode manapun**, di semua alur yang ada. Satu-satunya
+     penanda "siapa/tim mana yang menangani" yang benar-benar terisi
+     konsisten adalah `Report.assignedSectionId` — level SEKSI/TIM, bukan
+     individu.
+  2. `ReportProgressUpdate.createdBy` justru SELALU terisi benar dengan id
+     Kasi yang beraksi — tapi `ProgressStatus` enum (`plan, progress,
+     budget_request, escalation_request, completion_submission,
+     review_note`) **tidak punya nilai "resolved"**, dan
+     `resolveKasiReport` (Kasi menandai laporan selesai) menulis baris
+     progress dengan `updateType: "progress"` yang sama seperti update
+     progres biasa — jadi tidak ada cara bersih mengidentifikasi "baris
+     progress mana yang merupakan tindakan PENYELESAIAN laporan" tanpa
+     inferensi rapuh berbasis kedekatan timestamp ke `resolvedAt`.
+  Kesimpulan: memaksakan atribusi ke Kasi individu berarti membangun fitur
+  evaluasi kinerja di atas data yang secara desain skema TIDAK PERNAH
+  benar-benar merekam "Kasi individu mana yang bertanggung jawab" —
+  hasilnya akan terlihat presisi (nama orang) tapi sebenarnya cuma tebakan.
+  Per-seksi jujur terhadap apa yang benar-benar direkam sistem, dan tetap
+  actionable untuk keputusan desa (satu seksi biasanya beranggota sedikit
+  Kasi, jadi "seksi mana yang perlu dibantu" tetap informasi berguna).
+- **KEPUTUSAN 2 — 3a/3b live query dari `Report`, TIDAK PERNAH menyentuh
+  `PerformanceSnapshot`.** `PerformanceSnapshot` HANYA dipakai untuk 3c
+  (predikat). **Alasan**: 3a/3b butuh data yang selalu real-time dan bisa
+  difilter bebas (ganti periode kapan saja, lihat bulan mana saja) — kalau
+  dipaksa baca dari snapshot, snapshot harus di-generate untuk SETIAP
+  kombinasi periode yang mungkin dilihat orang, yang berarti butuh
+  scheduler/cron (yang TIDAK ADA infrastrukturnya sama sekali di proyek
+  ini, dikonfirmasi saat investigasi awal — tidak ada
+  `SLA_ALERT_CRON_SECRET`, tidak ada `vercel.json`, satu-satunya pola
+  "terjadwal" yang ada adalah tombol manual). Live query dari `Report`
+  jauh lebih sederhana dan otomatis selalu akurat. `PerformanceSnapshot`
+  sebaliknya COCOK untuk 3c karena predikat memang harus jadi "catatan
+  yang dibekukan" — begitu ditentukan untuk suatu periode, hasilnya tidak
+  boleh diam-diam berubah kalau ada laporan baru masuk/berubah status
+  setelahnya (predikat "Januari" harus tetap sama isinya biar pun dilihat
+  lagi bulan Maret).
+- **KEPUTUSAN 3 — `totalReports` = laporan yang `resolvedAt` jatuh dalam
+  rentang periode**, BUKAN "semua laporan yang pernah ditugaskan ke seksi
+  itu". Artinya laporan yang masih berjalan (belum resolved) tidak
+  dihitung sama sekali di periode manapun sampai benar-benar selesai —
+  konsisten dengan makna "evaluasi kinerja penyelesaian", bukan "beban
+  kerja".
+- **KEPUTUSAN 4 — skor komposit predikat (3c): 70% persen tepat waktu +
+  30% skor kecepatan** (rata-rata jam penyelesaian dinormalisasi relatif
+  antar seksi yang dibandingkan pada periode yang sama — seksi tercepat di
+  antara yang dibandingkan dapat skor kecepatan 100, seksi terlambat
+  mendekati 0). Bobot 70/30 dipilih supaya persentase tepat waktu (metrik
+  kepatuhan SLA yang sebenarnya) tetap dominan, kecepatan cuma pembeda
+  kedua untuk menghargai seksi yang selesai jauh sebelum tenggat (bukan
+  cuma pas-pasan). Syarat minimum **3 laporan selesai** per seksi supaya
+  seksi bervolume kecil tidak otomatis menang cuma karena kebetulan.
+  Konstanta ini ada di `ON_TIME_WEIGHT`/`SPEED_WEIGHT`/
+  `MIN_REPORTS_THRESHOLD` (`src/features/village/performanceActions.ts`)
+  kalau perlu diubah.
+- **KEPUTUSAN 5 — generate ulang predikat untuk periode yang SAMA
+  MENIMPA (upsert), bukan menumpuk baris baru atau ditolak.** Unique key
+  `@@unique([periodType, periodStart, periodEnd, scopeType])` di
+  `PerformanceSnapshot` (skema TIDAK menyertakan `sectionId`, karena
+  cuma ada SATU baris "pemenang" per periode, bukan satu baris per seksi
+  yang dievaluasi). Alasan lengkap dan pertimbangannya ditulis sebagai
+  komentar langsung di `schema.prisma` di atas model ini: predikat
+  mewakili "keputusan akhir" untuk periode itu; membiarkan banyak baris
+  untuk periode yang sama cuma bikin riwayat predikat membingungkan
+  (predikat mana yang "benar"?), sementara menolak generate ulang sama
+  sekali terlalu kaku untuk kebutuhan koreksi data. **Diverifikasi nyata**:
+  generate predikat 2x berturut-turut untuk periode yang sama menghasilkan
+  ID baris dan `createdAt` yang identik (baris lama di-update, bukan baris
+  baru).
+- **Implementasi**: `src/lib/performancePeriod.ts` (fungsi murni tanggal,
+  tidak sentuh database — hitung rentang bulanan/triwulanan, jendela tren,
+  daftar pilihan periode untuk dropdown). `src/features/village/queries/
+  performance.ts` (`getVillagePerformanceData` untuk 3a/3b — 1x fetch
+  laporan resolved mencakup seluruh jendela tren lalu di-bucket per
+  periode di memori, bukan query berulang per periode;
+  `getPerformancePredicateHistory` untuk daftar riwayat predikat).
+  `src/features/village/performanceActions.ts` (`generatePerformancePredicate`
+  — pola manual-trigger sama seperti tombol "Send SLA Alerts" yang sudah
+  ada, karena memang tidak ada infrastruktur cron). Halaman baru
+  `/dashboard/village/performance` (Kepala Desa/Sekdes, digerbangi lewat
+  `village/layout.tsx` yang sudah ada): filter periode via URL query
+  (`?tipe=&periode=`, pola sama seperti `AdminReportFilterBar`), 4 kartu
+  statistik, chart tren area stack (tepat waktu vs terlambat, warna dari
+  token `--success`/`--danger` yang sudah ada), 2 tabel breakdown (seksi +
+  kategori) dengan bar chart ranking persen tepat waktu — gaya visual
+  mengikuti `VillageAnalyticsCharts.tsx` (chart tren/area adalah tipe
+  chart PERTAMA di codebase ini, sebelumnya cuma ada pie + horizontal
+  bar). Link navigasi baru "Evaluasi Kinerja" ditambahkan ke sidebar
+  Kepala Desa/Sekdes (`dashboardNavigation.tsx`).
+- **Data seed demo (SENGAJA DIBIARKAN TERSIMPAN di database, TIDAK
+  dihapus)**: `prisma/seedPerformanceDemoData.mjs` (dijalankan manual
+  sekali, sudah dieksekusi sesi ini) membuat 5 kategori + 4 dusun + 3 seksi
+  desa + aturan SLA 4 prioritas (nama realistis, BUKAN diberi label
+  "Demo" — ini data referensi sungguhan yang dibutuhkan aplikasi jalan
+  normal) DAN 83 laporan tersebar 4 bulan terakhir dengan **bias performa
+  sengaja berbeda antar seksi** (Seksi Pembangunan onTimeBias 0.82, dua
+  seksi lain 0.55-0.6) supaya demo predikat punya pemenang yang jelas dan
+  bisa dibuktikan, bukan kebetulan. **Semua akun pelapor & Kasi demo
+  diberi nama berawalan "Demo -"** (mis. "Demo - Warga 1", "Demo - Kasi
+  Seksi Pembangunan") supaya gampang dibedakan dari data asli — **kalau
+  sesi lain menemukan banyak laporan "Demo -" di database, INI ALASANNYA,
+  bukan bug atau data nyasar.** Password akun demo (kalau perlu login
+  manual saat demo): `Demo12345!`. Tidak ada `ReportStatusLog`/
+  `ReportProgressUpdate` dibuat untuk laporan-laporan ini (sengaja
+  dilewati, cukup untuk kebutuhan statistik agregat 3a/3b/3c yang murni
+  baca kolom `Report` langsung — detail laporan demo per-item tidak akan
+  punya riwayat status kalau dibuka).
+- **Diverifikasi dengan data seed lewat browser (Playwright)**: dihitung
+  dulu secara independen (skrip terpisah, rumus sama persis dengan
+  aplikasi) performa tiap seksi per bulan dari data seed — ditemukan bulan
+  Agustus 2026 (bulan lalu) dimenangkan Seksi Pelayanan Umum (variasi
+  acak di sampel kecil membalik keunggulan Pembangunan bulan itu),
+  sementara Juni 2026 dimenangkan telak oleh Seksi Pembangunan (100%
+  tepat waktu, 13/13). Login sebagai akun `kepala_desa` uji sementara
+  (dibuat khusus sesi ini, dihapus lagi setelahnya — tidak ada akun
+  kepala_desa/sekdes permanen di database) → buka halaman → total
+  laporan berubah sesuai periode yang dipilih (16 vs 23, bukan chart
+  statis) → generate predikat Juni 2026 → toast & database membuktikan
+  Seksi Pembangunan menang → generate ULANG untuk periode SAMA → database
+  membuktikan tetap 1 baris (ID & `createdAt` sama, upsert bukan
+  duplikat) → riwayat predikat menampilkan entri tersebut setelah reload.
+  Semua 13 assertion lolos di percobaan pertama. Baris predikat Juni 2026
+  hasil verifikasi ini **SENGAJA DIBIARKAN tersimpan** (bukan dihapus
+  seperti akun uji) — dianggap bagian wajar dari data demo, bukan artefak
+  test yang perlu dibersihkan, supaya saat didemokan nanti fitur ini
+  sudah terlihat "pernah dipakai", bukan tombol yang belum pernah diklik.
+  Bug kecil (aksesibilitas, bukan fungsional) ditemukan & diperbaiki
+  sekalian: dropdown filter periode di halaman ini tidak punya `id`/`name`
+  sama sekali (ikut pola `AdminReportFilterBar` yang juga begitu) sehingga
+  label tidak terasosiasi — diperbaiki dengan menambah `name="tipe"`/
+  `name="periode"` di `VillagePerformanceFilterBar.tsx`.
+
+- [ ] Cabang 4-5 — belum dikerjakan, menyusul di sesi berikutnya.
 
 ## Aturan Kerja untuk Claude Code
 
