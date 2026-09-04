@@ -78,6 +78,52 @@ export function CategoryCreateModal() {
             />
           </div>
 
+          <div className="rounded-2xl border border-border bg-muted/30 p-4">
+            <p className="text-sm font-semibold text-foreground">
+              Durasi SLA khusus (opsional)
+            </p>
+            <p className="mt-1 text-xs leading-5 text-muted-foreground">
+              Kosongkan untuk memakai aturan berdasarkan prioritas seperti
+              biasa. Diisi keduanya = durasi ini menggantikan aturan
+              prioritas sepenuhnya untuk kategori ini.
+            </p>
+
+            <div className="mt-4 grid gap-4 sm:grid-cols-2">
+              <div>
+                <label
+                  className="form-label"
+                  htmlFor="sla_verification_hours"
+                >
+                  Durasi verifikasi khusus (jam)
+                </label>
+
+                <Input
+                  id="sla_verification_hours"
+                  name="sla_verification_hours"
+                  type="number"
+                  min="1"
+                  step="1"
+                  placeholder="Contoh: 24"
+                />
+              </div>
+
+              <div>
+                <label className="form-label" htmlFor="sla_resolution_hours">
+                  Durasi penyelesaian khusus (jam)
+                </label>
+
+                <Input
+                  id="sla_resolution_hours"
+                  name="sla_resolution_hours"
+                  type="number"
+                  min="1"
+                  step="1"
+                  placeholder="Contoh: 72"
+                />
+              </div>
+            </div>
+          </div>
+
           <div className="flex flex-col-reverse gap-3 border-t border-border pt-5 sm:flex-row sm:justify-end">
             <Button
               type="button"

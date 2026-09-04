@@ -236,7 +236,7 @@ model Category {
 
   reports              Report[]
   performanceSnapshots PerformanceSnapshot[]
-  slaThresholds        SlaCategoryThreshold[]
+  slaThreshold         SlaCategoryThreshold?
 
   @@map("categories")
 }

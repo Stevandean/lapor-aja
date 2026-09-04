@@ -21,6 +21,8 @@ type Category = {
   is_active: boolean;
   created_at: string;
   updated_at: string;
+  sla_verification_hours: number | null;
+  sla_resolution_hours: number | null;
 };
 
 type CategoryTableProps = {
@@ -189,6 +191,57 @@ function CategoryEditModal({ category }: { category: Category }) {
               defaultValue={category.description ?? ""}
               rows={4}
             />
+          </div>
+
+          <div className="rounded-2xl border border-border bg-muted/30 p-4">
+            <p className="text-sm font-semibold text-foreground">
+              Durasi SLA khusus (opsional)
+            </p>
+            <p className="mt-1 text-xs leading-5 text-muted-foreground">
+              Kosongkan untuk memakai aturan berdasarkan prioritas seperti
+              biasa. Diisi keduanya = durasi ini menggantikan aturan
+              prioritas sepenuhnya untuk kategori ini.
+            </p>
+
+            <div className="mt-4 grid gap-4 sm:grid-cols-2">
+              <div>
+                <label
+                  className="form-label"
+                  htmlFor={`sla-verification-${category.id}`}
+                >
+                  Durasi verifikasi khusus (jam)
+                </label>
+
+                <Input
+                  id={`sla-verification-${category.id}`}
+                  name="sla_verification_hours"
+                  type="number"
+                  min="1"
+                  step="1"
+                  placeholder="Contoh: 24"
+                  defaultValue={category.sla_verification_hours ?? ""}
+                />
+              </div>
+
+              <div>
+                <label
+                  className="form-label"
+                  htmlFor={`sla-resolution-${category.id}`}
+                >
+                  Durasi penyelesaian khusus (jam)
+                </label>
+
+                <Input
+                  id={`sla-resolution-${category.id}`}
+                  name="sla_resolution_hours"
+                  type="number"
+                  min="1"
+                  step="1"
+                  placeholder="Contoh: 72"
+                  defaultValue={category.sla_resolution_hours ?? ""}
+                />
+              </div>
+            </div>
           </div>
 
           <div className="flex flex-col-reverse gap-3 border-t border-border pt-5 sm:flex-row sm:justify-end">

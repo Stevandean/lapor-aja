@@ -28,6 +28,9 @@ export async function getCategoryMasterData() {
       isActive: true,
       createdAt: true,
       updatedAt: true,
+      slaThreshold: {
+        select: { verificationHours: true, resolutionHours: true },
+      },
     },
     orderBy: { name: "asc" },
   });
@@ -39,6 +42,8 @@ export async function getCategoryMasterData() {
     is_active: category.isActive,
     created_at: category.createdAt.toISOString(),
     updated_at: category.updatedAt.toISOString(),
+    sla_verification_hours: category.slaThreshold?.verificationHours ?? null,
+    sla_resolution_hours: category.slaThreshold?.resolutionHours ?? null,
   }));
 }
 
