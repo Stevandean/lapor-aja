@@ -21,3 +21,5 @@ export {
   getVillageBudgetRequestsData,
   getVillageBudgetRequestDetail,
 } from "./budget";
+
+export { getVillagePerformanceData } from "./performance";

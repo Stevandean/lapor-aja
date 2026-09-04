@@ -1,6 +1,7 @@
 import {
   Archive,
   ArrowRightCircle,
+  Award,
   BarChart3,
   ClipboardList,
   Database,
@@ -139,6 +140,11 @@ export function getDashboardNavigation(role: UserRole): DashboardNavItem[] {
         label: "Monitoring SLA",
         href: "/dashboard/village/sla",
         icon: Gauge,
+      },
+      {
+        label: "Evaluasi Kinerja",
+        href: "/dashboard/village/performance",
+        icon: Award,
       },
       {
         label: "Pengajuan Anggaran",
