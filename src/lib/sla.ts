@@ -86,3 +86,81 @@ export function calculateEffectiveSlaStatus(
 export function isEffectiveSlaOverdue(report: SlaReportSnapshot) {
   return calculateEffectiveSlaStatus(report) === "overdue";
 }
+
+// =====================================================================
+// Cabang 1c — tenggat SLA berbasis hari kerja
+// =====================================================================
+//
+// KEPUTUSAN (2026-09-04): hari kerja SELALU aktif untuk SEMUA kalkulasi
+// tenggat (verification_due_at DAN resolution_due_at) — tidak ada toggle
+// untuk mematikannya per kategori atau global. Lihat CLAUDE.md bagian
+// Cabang 1 untuk rasionalisasi lengkap.
+//
+// Semua perbandingan tanggal di bawah ini SENGAJA pakai komponen UTC
+// (getUTCDay/toISOString), bukan waktu lokal server. Alasan: server bisa
+// jalan di timezone apa pun (mesin dev WIB vs kemungkinan deploy production
+// yang defaultnya UTC) — kalau perbandingan "apakah ini hari Sabtu/Minggu"
+// dan "apakah tanggal ini hari libur" pakai basis yang berbeda-beda
+// tergantung timezone proses, hasilnya bisa tidak konsisten. Basis UTC
+// tunggal untuk keduanya membuat hasil deterministik di mana pun kode ini
+// dijalankan.
+
+const MS_PER_HOUR = 60 * 60 * 1000;
+
+function isUtcWeekend(date: Date) {
+  const day = date.getUTCDay();
+  return day === 0 || day === 6;
+}
+
+export function toUtcDateKey(date: Date) {
+  return date.toISOString().slice(0, 10);
+}
+
+function isNonBusinessDay(date: Date, holidayDateKeys: ReadonlySet<string>) {
+  return isUtcWeekend(date) || holidayDateKeys.has(toUtcDateKey(date));
+}
+
+/**
+ * Hitung tenggat SLA dengan melompati jam yang jatuh di akhir pekan
+ * (Sabtu/Minggu) atau tanggal di `holidayDateKeys` (format "YYYY-MM-DD",
+ * lihat `toUtcDateKey`). Bergerak maju PER JAM dari `startDate`: tiap jam
+ * yang jatuh di hari kerja mengurangi sisa `hours` yang perlu dipenuhi,
+ * tiap jam yang jatuh di akhir pekan/libur dilewati begitu saja (kalender
+ * tetap maju, tapi tidak mengurangi sisa jam SLA).
+ *
+ * Contoh pembuktian manual (sesuai yang diminta):
+ * - Mulai Jumat 12:00 + 24 jam SLA, Sabtu-Minggu libur (tidak ada national
+ *   holiday di rentang ini):
+ *   - Jumat 12:00 -> Sabtu 00:00 = 12 jam kerja terhitung (sisa: 24-12=12)
+ *   - Sabtu 00:00 -> Minggu 00:00 = 24 jam dilewati (bukan hari kerja)
+ *   - Minggu 00:00 -> Senin 00:00 = 24 jam dilewati (bukan hari kerja)
+ *   - Senin 00:00 + 12 jam sisa = Senin 12:00
+ *   -> Hasil: Senin 12:00. Cocok dengan ekspektasi "Jumat siang + 24 jam
+ *      SLA jatuh ke Senin siang".
+ * - Mulai Senin 09:00 + 8 jam SLA, tidak ada akhir pekan/libur di antaranya
+ *   -> Senin 17:00 (semua 8 jam adalah hari kerja, tidak ada yang
+ *      dilompati, sama seperti kalkulasi mentah `now + jam`).
+ * - Mulai Kamis 10:00 + 4 jam SLA, dengan Jumat sebagai national holiday:
+ *   - Kamis 10:00 -> Kamis 14:00 = 4 jam kerja terhitung, sisa jam habis
+ *     SEBELUM menyentuh hari Jumat yang libur
+ *   -> Hasil: Kamis 14:00 (hari libur besok tidak berpengaruh sama sekali
+ *      kalau tenggatnya sudah tercapai lebih dulu).
+ */
+export function calculateBusinessAwareDueDate(
+  startDate: Date,
+  hours: number,
+  holidayDateKeys: ReadonlySet<string>
+): Date {
+  let remainingHours = hours;
+  let current = new Date(startDate.getTime());
+
+  while (remainingHours > 0) {
+    current = new Date(current.getTime() + MS_PER_HOUR);
+
+    if (!isNonBusinessDay(current, holidayDateKeys)) {
+      remainingHours -= 1;
+    }
+  }
+
+  return current;
+}
