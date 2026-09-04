@@ -90,6 +90,16 @@ export function getPeriodOptions(
   return options;
 }
 
+// Kolom `period_start`/`period_end` di `PerformanceSnapshot` bertipe
+// @db.Date (MySQL DATE, tanpa jam). `getPeriodRange` mengembalikan Date
+// dalam waktu lokal server — kalau ditulis apa adanya, sisi UTC yang
+// dipakai MySQL DATE bisa mundur satu hari (mis. server WIB, tengah malam
+// lokal = 17:00 UTC hari sebelumnya). Fungsi ini menormalkan ke tanggal
+// UTC yang benar sebelum ditulis ke kolom DATE.
+export function toDateOnlyUtc(date: Date): Date {
+  return new Date(Date.UTC(date.getFullYear(), date.getMonth(), date.getDate()));
+}
+
 export const PERFORMANCE_TREND_LENGTH: Record<PerformancePeriodType, number> = {
   bulanan: 6,
   triwulanan: 4,

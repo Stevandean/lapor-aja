@@ -13,7 +13,12 @@ import {
   VillagePerformanceBreakdownTable,
   VillagePerformanceTrendChart,
 } from "@/src/features/village/components/VillagePerformanceCharts";
-import { getVillagePerformanceData } from "@/src/features/village/queries";
+import { VillagePerformancePredicateButton } from "@/src/features/village/components/VillagePerformancePredicateButton";
+import { VillagePerformancePredicateHistory } from "@/src/features/village/components/VillagePerformancePredicateHistory";
+import {
+  getPerformancePredicateHistory,
+  getVillagePerformanceData,
+} from "@/src/features/village/queries";
 import {
   getPeriodOptions,
   PERFORMANCE_PERIOD_OPTION_COUNT,
@@ -38,11 +43,12 @@ export default async function VillagePerformancePage({
     params.tipe === "triwulanan" ? "triwulanan" : "bulanan";
   const periodOffset = params.periode !== undefined ? Number(params.periode) : DEFAULT_OFFSET;
 
-  const [data, periodOptions] = await Promise.all([
+  const [data, predicateHistory, periodOptions] = await Promise.all([
     getVillagePerformanceData({
       periodType,
       periodOffset: Number.isFinite(periodOffset) ? periodOffset : DEFAULT_OFFSET,
     }),
+    getPerformancePredicateHistory(),
     Promise.resolve(
       getPeriodOptions(periodType, PERFORMANCE_PERIOD_OPTION_COUNT[periodType]).map(
         (option) => ({ offset: option.offset, label: option.label })
@@ -63,18 +69,22 @@ export default async function VillagePerformancePage({
           Kembali ke dashboard desa
         </Link>
 
-        <div className="mt-5">
-          <p className="text-sm font-semibold text-primary">Evaluasi Kinerja</p>
+        <div className="mt-5 flex flex-col justify-between gap-4 lg:flex-row lg:items-end">
+          <div>
+            <p className="text-sm font-semibold text-primary">Evaluasi Kinerja</p>
 
-          <h1 className="mt-2 text-2xl font-bold tracking-tight text-foreground sm:text-3xl">
-            Evaluasi Kinerja Penanganan Laporan
-          </h1>
+            <h1 className="mt-2 text-2xl font-bold tracking-tight text-foreground sm:text-3xl">
+              Evaluasi Kinerja Penanganan Laporan
+            </h1>
 
-          <p className="mt-2 max-w-2xl text-sm leading-6 text-muted-foreground">
-            Pantau persentase penyelesaian tepat waktu, tren antar periode,
-            dan perbandingan performa antar seksi maupun kategori laporan.
-            {selectedPeriod ? ` Periode terpilih: ${selectedPeriod.label}.` : ""}
-          </p>
+            <p className="mt-2 max-w-2xl text-sm leading-6 text-muted-foreground">
+              Pantau persentase penyelesaian tepat waktu, tren antar periode,
+              dan perbandingan performa antar seksi maupun kategori laporan.
+              {selectedPeriod ? ` Periode terpilih: ${selectedPeriod.label}.` : ""}
+            </p>
+          </div>
+
+          <VillagePerformancePredicateButton />
         </div>
       </section>
 
@@ -141,6 +151,8 @@ export default async function VillagePerformancePage({
           data={byCategory}
         />
       </section>
+
+      <VillagePerformancePredicateHistory records={predicateHistory} />
     </div>
   );
 }

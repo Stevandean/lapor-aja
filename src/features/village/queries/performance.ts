@@ -203,3 +203,49 @@ export async function getVillagePerformanceData({
     trend,
   };
 }
+
+export type PerformancePredicateRecord = {
+  id: string;
+  periodType: PerformancePeriodType;
+  periodStart: string;
+  periodEnd: string;
+  sectionName: string | null;
+  totalReports: number;
+  onTimeReports: number;
+  lateReports: number;
+  onTimePercentage: number;
+  avgResolutionHours: number;
+  badgeLabel: string | null;
+  createdAt: string;
+};
+
+export async function getPerformancePredicateHistory(): Promise<
+  PerformancePredicateRecord[]
+> {
+  const profile = await requireVillageLeaderProfile();
+
+  if (!profile) {
+    return [];
+  }
+
+  const snapshots = await prisma.performanceSnapshot.findMany({
+    where: { scopeType: "seksi" },
+    orderBy: { periodStart: "desc" },
+    include: { section: { select: { name: true } } },
+  });
+
+  return snapshots.map((snapshot) => ({
+    id: snapshot.id,
+    periodType: snapshot.periodType,
+    periodStart: snapshot.periodStart.toISOString(),
+    periodEnd: snapshot.periodEnd.toISOString(),
+    sectionName: snapshot.section?.name ?? null,
+    totalReports: snapshot.totalReports,
+    onTimeReports: snapshot.onTimeReports,
+    lateReports: snapshot.lateReports,
+    onTimePercentage: Number(snapshot.onTimePercentage),
+    avgResolutionHours: Number(snapshot.avgResolutionHours),
+    badgeLabel: snapshot.badgeLabel,
+    createdAt: snapshot.createdAt.toISOString(),
+  }));
+}
