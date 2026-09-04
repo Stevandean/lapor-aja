@@ -161,10 +161,20 @@ enum EscalationLevel {
 }
 
 // BARU — Cabang 3: lingkup penilaian predikat kinerja
+// KEPUTUSAN (2026-09-04): scope kinerja PER SEKSI, bukan per individu Kasi
+// ("kasi" -> "seksi") — lihat komentar lengkap di PerformanceSnapshot untuk
+// rasionalisasi (assignedTo di ReportSectionAssignment tidak pernah diisi,
+// penugasan selalu ke level seksi/tim, bukan individu).
 enum PerformanceScope {
-  kasi
+  seksi
   dusun
   kategori
+}
+
+// BARU — Cabang 3
+enum PerformancePeriodType {
+  bulanan
+  triwulanan
 }
 
 // BARU — Cabang 5
@@ -217,10 +227,11 @@ model VillageSection {
   createdAt   DateTime @default(now()) @map("created_at")
   updatedAt   DateTime @updatedAt @map("updated_at")
 
-  profiles        Profile[]
-  assignedReports Report[]                 @relation("ReportAssignedSection")
-  assignments     ReportSectionAssignment[]
-  budgetRequests  ReportBudgetRequest[]
+  profiles             Profile[]
+  assignedReports      Report[]                   @relation("ReportAssignedSection")
+  assignments          ReportSectionAssignment[]
+  budgetRequests       ReportBudgetRequest[]
+  performanceSnapshots PerformanceSnapshot[]
 
   @@map("village_sections")
 }
@@ -353,7 +364,6 @@ model Profile {
   budgetRequestsReviewed ReportBudgetRequest[]        @relation("BudgetReviewedBy")
   slaEventsCreated       ReportSlaEvent[]
   slaAlertsTriggered     ReportSlaAlertNotification[]
-  performanceSnapshots   PerformanceSnapshot[]
   swadayaCampaignsOpened SwadayaCampaign[]
   contributionsMade      SwadayaContribution[]        @relation("ContributorProfile")
   contributionsVerified  SwadayaContribution[]        @relation("VerifierProfile")
@@ -752,25 +762,66 @@ model ReportSlaAlertNotification {
 // BARU — CABANG 3: EVALUASI KINERJA / PREDIKAT KINERJA TERBAIK
 // =====================================================================
 
+// KEPUTUSAN DESAIN (2026-09-04, lihat CLAUDE.md bagian Cabang 3 untuk
+// rasionalisasi lengkap — WAJIB dikutip kalau ditanya saat sidang):
+//
+// 1. Scope kinerja PER SEKSI, bukan per individu Kasi. Investigasi
+//    membuktikan `ReportSectionAssignment.assignedTo` (kolom yang
+//    seharusnya jadi "Kasi individu yang ditugaskan") TIDAK PERNAH diisi
+//    kode manapun sejak awal — penugasan laporan SELALU ke level seksi
+//    (tim), bukan orang per orang. Satu-satunya jejak individu yang
+//    benar-benar terisi (`ReportProgressUpdate.createdBy`) tidak bisa
+//    dipetakan bersih ke "siapa yang menyelesaikan laporan ini" karena
+//    `ProgressStatus` bahkan tidak punya nilai "resolved" — cuma bisa
+//    diduga lewat kedekatan waktu, bukan kolom eksplisit. Menilai kinerja
+//    "per Kasi" dengan data seperti ini akan menghasilkan angka yang
+//    secara teknis tidak bisa dipertanggungjawabkan. Per seksi konsisten
+//    dengan cara SISA aplikasi sudah bekerja (semua query Kasi memfilter
+//    murni `assignedSectionId`, tidak ada konsep "laporan milik saya"
+//    vs "laporan tim saya" di mana pun).
+// 2. Dipakai HANYA untuk predikat (3c) — HASIL live-query untuk dashboard
+//    evaluasi (3a/3b) TIDAK disimpan di sini sama sekali, dihitung
+//    langsung dari `Report` tiap kali halaman dibuka (lihat
+//    village/queries/performance.ts). Alasan pemisahan ini: 3a/3b perlu
+//    selalu real-time & fleksibel difilter (rentang tanggal bebas,
+//    breakdown apa pun) — snapshot cuma akan jadi cache yang berpotensi
+//    basi. Predikat (3c) sebaliknya SENGAJA harus jadi catatan permanen
+//    ("Seksi X terbaik bulan Januari") yang tidak berubah lagi meski data
+//    laporan lama diedit belakangan — itu baru alasan nyata untuk
+//    disimpan sebagai baris tersendiri, bukan dihitung ulang tiap saat.
+// 3. `totalReports` = laporan yang `resolved_at`-nya JATUH DI DALAM
+//    rentang periode (bukan "semua yang pernah ditugaskan" — laporan
+//    yang belum selesai tidak ikut dihitung ke periode manapun).
 model PerformanceSnapshot {
-  id                 String           @id @default(uuid()) @db.Char(36)
-  periodType         String           @map("period_type") @db.VarChar(20) // "bulanan" | "triwulanan"
-  periodStart        DateTime         @map("period_start") @db.Date
-  periodEnd          DateTime         @map("period_end") @db.Date
-  scopeType          PerformanceScope @map("scope_type")
-  profileId          String?          @map("profile_id") @db.Char(36) // diisi jika scopeType = kasi
-  dusunId            String?          @map("dusun_id") @db.Char(36) // diisi jika scopeType = dusun
-  categoryId         String?          @map("category_id") @db.Char(36) // diisi jika scopeType = kategori
-  totalReports       Int              @map("total_reports")
-  onTimePercentage   Decimal          @map("on_time_percentage") @db.Decimal(5, 2)
-  avgResolutionHours Decimal          @map("avg_resolution_hours") @db.Decimal(10, 2)
-  badgeLabel         String?          @map("badge_label") @db.VarChar(150)
-  createdAt          DateTime         @default(now()) @map("created_at")
+  id                 String                @id @default(uuid()) @db.Char(36)
+  periodType         PerformancePeriodType @map("period_type")
+  periodStart        DateTime              @map("period_start") @db.Date
+  periodEnd          DateTime              @map("period_end") @db.Date
+  scopeType          PerformanceScope      @map("scope_type")
+  sectionId          String?               @map("section_id") @db.Char(36) // diisi jika scopeType = seksi
+  dusunId            String?               @map("dusun_id") @db.Char(36) // diisi jika scopeType = dusun
+  categoryId         String?               @map("category_id") @db.Char(36) // diisi jika scopeType = kategori
+  totalReports       Int                   @map("total_reports")
+  onTimeReports      Int                   @map("on_time_reports")
+  lateReports        Int                   @map("late_reports")
+  onTimePercentage   Decimal               @map("on_time_percentage") @db.Decimal(5, 2)
+  avgResolutionHours Decimal               @map("avg_resolution_hours") @db.Decimal(10, 2)
+  badgeLabel         String?               @map("badge_label") @db.VarChar(150)
+  createdAt          DateTime              @default(now()) @map("created_at")
 
-  profile  Profile?  @relation(fields: [profileId], references: [id])
-  dusun    Dusun?    @relation(fields: [dusunId], references: [id])
-  category Category? @relation(fields: [categoryId], references: [id])
+  section  VillageSection? @relation(fields: [sectionId], references: [id])
+  dusun    Dusun?          @relation(fields: [dusunId], references: [id])
+  category Category?       @relation(fields: [categoryId], references: [id])
 
+  // Satu predikat per kombinasi periode+scope — generate ulang untuk
+  // periode yang SAMA menimpa (upsert) baris ini, bukan menumpuk baris
+  // baru. Alasan: predikat mewakili "keputusan akhir" untuk periode itu;
+  // membiarkan banyak baris untuk periode yang sama cuma akan bikin
+  // riwayat predikat membingungkan (predikat mana yang "benar"?), dan
+  // menolak generate ulang sama sekali terlalu kaku kalau ada kebutuhan
+  // koreksi data. Periode yang BEDA tetap dapat baris masing-masing,
+  // itulah riwayat predikat yang sebenarnya ingin ditampilkan.
+  @@unique([periodType, periodStart, periodEnd, scopeType])
   @@map("performance_snapshots")
 }
 
