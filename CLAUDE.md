@@ -45,13 +45,16 @@ Semua fitur berikut **WAJIB** dikerjakan (bukan opsional), didesain rule-based
   untuk semua laporan (bukan opsional per kategori). Detail di "Progres
   Sejauh Ini".
 
-### Cabang 2 — Notifikasi & Eskalasi
-- 2a. Notifikasi bertingkat sesuai level eskalasi: level 1 → Kasi
-  penanggung jawab, level 2 → +Admin, level 3 → +Kepala Desa (saat ini
-  notifikasi FLAT broadcast ke admin+kepala_desa+sekdes untuk semua alert,
-  Kasi malah TIDAK termasuk penerima — ini bug/gap nyata yang harus diperbaiki)
-- 2b. Daftar laporan berisiko (watchlist) — halaman kerja harian, filter per
-  dusun/kategori/penanggung jawab
+### Cabang 2 — Notifikasi & Eskalasi — **SELESAI (2026-09-04)**
+- [x] **2a. SELESAI** — Notifikasi bertingkat sesuai level eskalasi: level 1
+  → Kasi penanggung jawab (fallback ke Admin kalau laporan belum
+  diklasifikasi), level 2 → +Admin, level 3 → +Kepala Desa/Sekdes. Detail
+  di "Progres Sejauh Ini".
+- [x] **2b. SELESAI** — Daftar laporan berisiko (watchlist): 3 halaman
+  kerja harian yang SUDAH ADA (`/dashboard/kasi/reports`,
+  `/dashboard/admin/reports`, `/dashboard/village/sla`) diperluas dengan
+  badge status SLA + filter, **BUKAN halaman baru** — lihat rasionalisasi
+  di "Progres Sejauh Ini".
 
 ### Cabang 3 — Evaluasi Kinerja (belum ada sama sekali di kode)
 - 3a. Dashboard evaluasi kinerja per periode (persentase tepat waktu vs
@@ -699,7 +702,69 @@ kalau dihitung mentah) — dikonfirmasi lewat perhitungan referensi
 independen yang cuma beda ~150 milidetik (waktu round-trip query) dari
 hasil aktual. Data uji dibersihkan total setelahnya.
 
-- [ ] Cabang 2-5 — belum dikerjakan, menyusul di sesi berikutnya.
+**Cabang 2 — SELESAI (2026-09-04 sesi lanjutan)**, dikerjakan sekaligus
+2a+2b karena keduanya berhubungan langsung (2b butuh status SLA yang
+sama seperti dipakai 2a untuk memutuskan siapa yang dialert):
+
+- **KEPUTUSAN 1 — pemetaan tetap alert_type → escalation_level**:
+  `at_risk` → `level_1`, `critical` → `level_2`, `overdue` → `level_3`.
+  Tidak bisa diubah lewat konfigurasi, hardcode di
+  `ALERT_TYPE_ESCALATION_LEVEL` (`src/features/reports/
+  slaAlertNotifications.ts`) — makin parah levelnya, makin tinggi
+  eskalasinya, sesuai urutan keparahan yang sudah ditetapkan di Cabang 1a.
+- **KEPUTUSAN 2 — penerima KUMULATIF per level, bukan daftar terpisah**:
+  level_1 = semua Kasi aktif di `assigned_section_id` laporan. **Fallback**:
+  kalau laporan belum diklasifikasi admin (`assigned_section_id` masih
+  null — kondisi nyata yang ditemukan saat investigasi: laporan bisa
+  sudah kena hitungan mundur SLA sejak status `need_verification`, jauh
+  sebelum ada Kasi yang bisa dianggap bertanggung jawab), kirim ke semua
+  Admin aktif sebagai ganti. level_2 = level_1 + semua Admin aktif.
+  level_3 = level_2 + semua Kepala Desa & Sekdes aktif. Dedupe by profile
+  id (`resolveAlertRecipients()`) — penerima yang sudah masuk di level
+  bawah tidak dikirimi ulang saat level di atasnya juga mencakup dia.
+  **Kenapa kumulatif, bukan daftar terpisah per level**: supaya orang
+  yang sudah tahu dari level rendah tetap dapat notifikasi eskalasi lebih
+  lanjut (bukan cuma orang BARU di level itu yang tahu), sesuai logika
+  eskalasi asli — Admin di level 2 seharusnya tahu juga saat naik ke
+  level 3, bukan cuma Kepala Desa yang baru ditambahkan.
+- **KEPUTUSAN 3 — tidak ada halaman watchlist baru**: 3 halaman kerja
+  harian yang SUDAH ADA diperluas — `/dashboard/kasi/reports` (query-nya
+  dulu bahkan tidak fetch `resolutionDueAt` sama sekali), `/dashboard/
+  admin/reports` (tombol "Saring"/"Ekspor" dulu dekorasi kosong, sekarang
+  benar-benar wired), `/dashboard/village/sla` (dulu sudah ada 4-level
+  badge dari Cabang 1a tapi nol filter). **Alasan**: investigasi
+  membuktikan ketiga halaman ini SUDAH punya kerangka "daftar laporan
+  milik saya/tim saya" per role — bikin halaman keempat/kelima cuma akan
+  duplikasi kerangka yang sama dengan data yang(mostly) sama, menambah
+  beban maintenance tanpa manfaat nyata. `SlaStatusBadge` diekstrak jadi
+  komponen bersama (`src/features/reports/components/SlaStatusBadge.tsx`)
+  supaya 3 halaman ini konsisten satu sumber warna/label, bukan 3 salinan
+  yang bisa mulai berbeda seiring waktu.
+- **Implementasi**: `createSlaAlertLock()` sekarang benar-benar mengisi
+  `escalationLevel` sesuai pemetaan (dulu selalu default `level_1` apa pun
+  keparahannya — dead code sejak awal). Pesan notifikasi dapat 1 kalimat
+  konteks tambahan khusus penerima Kasi ("Laporan ini ditugaskan ke seksi
+  Anda...") karena Kasi baru pertama kali jadi penerima jenis alert ini.
+  Filter di `/dashboard/admin/reports` pakai URL query param (bisa
+  di-bookmark/dibagikan, sesuai keputusan desain eksplisit); filter di
+  `/dashboard/kasi/reports` dan `/dashboard/village/sla` pakai client-side
+  state, konsisten dengan pola `VillageReportsTable` yang sudah ada
+  sebelumnya di sisi village. Ekspor CSV (`GET /api/exports/reports`)
+  ditulis manual tanpa library, ikut filter yang sama dengan yang sedang
+  aktif di halaman, khusus role admin.
+- **Diverifikasi dengan data nyata lewat browser (Playwright)**: alur
+  penuh warga lapor → admin approve (SENGAJA belum diklasifikasi) → alert
+  `at_risk` dikirim → dibuktikan cuma Admin yang dapat (fallback, karena
+  `assigned_section_id` masih null) → laporan diklasifikasi ke 1 seksi uji
+  yang sudah punya 1 Kasi uji → alert `critical` dikirim → dibuktikan Kasi
+  seksi itu DAN semua Admin dapat, Kepala Desa belum → alert `overdue`
+  dikirim → dibuktikan Kepala Desa ikut masuk. Dedupe dicek ketat pakai
+  `Set` di tiap tahap — tidak ada satu pun penerima yang dapat notifikasi
+  dobel. Filter di ketiga halaman dan ekspor CSV juga dicoba nyata lewat
+  browser, terbukti benar-benar menyaring jumlah baris (bukan dekorasi
+  seperti tombol lama). Data uji dibersihkan total setelahnya.
+
+- [ ] Cabang 3-5 — belum dikerjakan, menyusul di sesi berikutnya.
 
 ## Aturan Kerja untuk Claude Code
 
