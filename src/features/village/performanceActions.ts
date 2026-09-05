@@ -107,6 +107,7 @@ export async function generatePerformancePredicate(
       onTimePercentage: winner.onTimePercentage,
       avgResolutionHours: winner.avgResolutionHours,
       badgeLabel,
+      generatedBy: profile.id,
     },
     create: {
       periodType,
@@ -120,6 +121,7 @@ export async function generatePerformancePredicate(
       onTimePercentage: winner.onTimePercentage,
       avgResolutionHours: winner.avgResolutionHours,
       badgeLabel,
+      generatedBy: profile.id,
     },
   });
 

@@ -57,6 +57,7 @@ export function VillagePerformancePredicateHistory({
 
                   <p className="text-xs text-muted-foreground">
                     Ditentukan {formatDate(record.createdAt)}
+                    {record.generatedByName ? ` oleh ${record.generatedByName}` : ""}
                   </p>
                 </div>
 

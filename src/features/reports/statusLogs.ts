@@ -22,6 +22,13 @@ type CreateStatusLogParams = {
   note?: string | null;
   notifyReporter?: boolean;
   notifyWhatsApp?: boolean;
+  // Cabang 4a: dipakai oleh pemanggil TANPA sesi login (mis. sweep alert
+  // SLA lewat cron `/api/notifications/sla-alerts`, yang otorisasinya
+  // pakai bearer secret, bukan sesi NextAuth). Kalau diisi, dipakai
+  // langsung sebagai `changedBy` dan TIDAK bergantung pada `getProfile()`
+  // — tanpa ini, log alert yang dipicu cron akan senyap tidak tersimpan
+  // sama sekali karena `getProfile()` pasti null di konteks itu.
+  changedBy?: string | null;
 };
 
 export async function createReportStatusLog({
@@ -31,11 +38,20 @@ export async function createReportStatusLog({
   note = null,
   notifyReporter = true,
   notifyWhatsApp = true,
+  changedBy,
 }: CreateStatusLogParams) {
-  const profile = await getProfile();
+  let resolvedChangedBy: string | null;
 
-  if (!profile) {
-    return;
+  if (changedBy !== undefined) {
+    resolvedChangedBy = changedBy;
+  } else {
+    const profile = await getProfile();
+
+    if (!profile) {
+      return;
+    }
+
+    resolvedChangedBy = profile.id;
   }
 
   try {
@@ -44,7 +60,7 @@ export async function createReportStatusLog({
         reportId,
         oldStatus: oldStatus as ReportStatus | null,
         newStatus: newStatus as ReportStatus,
-        changedBy: profile.id,
+        changedBy: resolvedChangedBy,
         note,
       },
     });

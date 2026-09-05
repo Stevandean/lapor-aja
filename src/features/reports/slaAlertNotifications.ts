@@ -4,6 +4,7 @@ import { sendBrevoEmail } from "@/src/lib/email/brevo";
 import { prisma } from "@/src/lib/prisma";
 import type { EscalationLevel, Prisma, UserRole } from "@prisma/client";
 import { sendWhatsvaMessage } from "@/src/lib/whatsapp/whatsva";
+import { createReportStatusLog } from "@/src/features/reports/statusLogs";
 
 type SlaAlertType = "at_risk" | "critical" | "overdue";
 
@@ -258,6 +259,21 @@ export async function sendSlaAlertNotifications({
 
     const recipients = resolveAlertRecipients(report, alertType, allEligibleStaff);
     const alertSubject = buildSlaAlertSubject(report, alertType);
+
+    // Cabang 4a: catat alert sebagai jejak audit di linimasa SLA laporan.
+    // oldStatus === newStatus dengan sengaja (status alur laporan TIDAK
+    // berubah karena alert dikirim) — notifyReporter/notifyWhatsApp
+    // dimatikan supaya ini murni catatan internal, tidak memicu notifikasi
+    // "status berubah" palsu ke pelapor.
+    await createReportStatusLog({
+      reportId: report.id,
+      oldStatus: report.status,
+      newStatus: report.status,
+      note: `Alert eskalasi ${escalationLevel} (${getSlaAlertLabel(alertType)}) terkirim ke ${recipients.length} penerima (${describeRecipientRoles(recipients)}).`,
+      notifyReporter: false,
+      notifyWhatsApp: false,
+      changedBy: triggeredBy,
+    });
 
     for (const recipient of recipients) {
       const alertMessage = buildSlaAlertMessage(report, alertType, recipient.role);
@@ -593,6 +609,19 @@ Lokasi: ${getReportAddress(report)}
 
 Mohon segera lakukan pengecekan pada dashboard SLA Monitoring.
   `.trim();
+}
+
+function describeRecipientRoles(recipients: StaffRecipient[]) {
+  const roleLabels: Record<string, string> = {
+    kasi: "Kasi",
+    admin: "Admin",
+    kepala_desa: "Kepala Desa",
+    sekdes: "Sekdes",
+  };
+
+  const uniqueRoles = Array.from(new Set(recipients.map((recipient) => recipient.role)));
+
+  return uniqueRoles.map((role) => roleLabels[role] ?? role).join(", ");
 }
 
 function getSlaAlertLabel(alertType: SlaAlertType) {

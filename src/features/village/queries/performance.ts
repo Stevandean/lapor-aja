@@ -217,6 +217,7 @@ export type PerformancePredicateRecord = {
   avgResolutionHours: number;
   badgeLabel: string | null;
   createdAt: string;
+  generatedByName: string | null;
 };
 
 export async function getPerformancePredicateHistory(): Promise<
@@ -231,7 +232,10 @@ export async function getPerformancePredicateHistory(): Promise<
   const snapshots = await prisma.performanceSnapshot.findMany({
     where: { scopeType: "seksi" },
     orderBy: { periodStart: "desc" },
-    include: { section: { select: { name: true } } },
+    include: {
+      section: { select: { name: true } },
+      generatedByUser: { select: { fullName: true } },
+    },
   });
 
   return snapshots.map((snapshot) => ({
@@ -247,5 +251,6 @@ export async function getPerformancePredicateHistory(): Promise<
     avgResolutionHours: Number(snapshot.avgResolutionHours),
     badgeLabel: snapshot.badgeLabel,
     createdAt: snapshot.createdAt.toISOString(),
+    generatedByName: snapshot.generatedByUser?.fullName ?? null,
   }));
 }
