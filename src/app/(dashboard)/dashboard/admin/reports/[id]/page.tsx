@@ -27,6 +27,8 @@ import { GenerateOfficialLetterButton } from "@/src/features/admin/components/Ge
 import { ReportStatusTimeline } from "@/src/features/reports/components/ReportStatusTimeline";
 import { ReportSlaEventTimeline } from "@/src/features/reports/components/ReportSlaEventTimeline";
 import { ReportLocationPreviewSection } from "@/src/features/reports/components/ReportLocationPreviewSection";
+import { SwadayaOpenCampaignButton } from "@/src/features/reports/components/SwadayaOpenCampaignButton";
+import { getSwadayaCampaignForReport } from "@/src/features/reports/swadayaQueries";
 import { AdminFollowUpProgressPanel } from "@/src/features/admin/components/AdminFollowUpProgressPanel";
 
 import {
@@ -80,9 +82,10 @@ export default async function AdminReportDetailPage({
   params,
 }: ReportDetailPageProps) {
   const { id } = await params;
-  const [ detail, priorityOptions ] = await Promise.all([
+  const [ detail, priorityOptions, swadayaCampaign ] = await Promise.all([
     getAdminReportDetail(id),
     getActiveSlaPriorityOptions(),
+    getSwadayaCampaignForReport(id),
   ]);
   const { categories, hamlets } = await getAdminReportReviewOptions();
 
@@ -91,6 +94,10 @@ export default async function AdminReportDetailPage({
   }
 
   const { report, photos, verification, verificationPhotos } = detail;
+  const canOpenSwadaya =
+    Boolean(report.assigned_section_id) &&
+    report.status !== "resolved" &&
+    swadayaCampaign?.status !== "open";
 
   const status = report.status as keyof typeof REPORT_STATUS_LABELS;
   const priority = report.priority as keyof typeof REPORT_PRIORITY_LABELS;
@@ -401,6 +408,10 @@ export default async function AdminReportDetailPage({
             reportId={report.id}
             currentStatus={report.status}
           />
+
+          {canOpenSwadaya ? (
+            <SwadayaOpenCampaignButton reportId={report.id} />
+          ) : null}
 
           {report.status === "forwarded_to_agency" ? (
             <Card>

@@ -18,6 +18,8 @@ import {
 } from "@/src/components/ui/Card";
 import { ReportLocationPreviewSection } from "@/src/features/reports/components/ReportLocationPreviewSection";
 import { ReportStatusTimeline } from "@/src/features/reports/components/ReportStatusTimeline";
+import { SwadayaOpenCampaignButton } from "@/src/features/reports/components/SwadayaOpenCampaignButton";
+import type { SwadayaCampaignDetail } from "@/src/features/reports/swadayaQueries";
 import { KasiReportActionPanel } from "@/src/features/kasi/components/KasiReportActionPanel";
 import {
   REPORT_STATUS_BADGE_CLASSES,
@@ -134,14 +136,17 @@ type KasiReportDetailData = {
 
 type KasiReportDetailProps = {
   detail: KasiReportDetailData;
+  swadayaCampaign: SwadayaCampaignDetail | null;
 };
 
-export function KasiReportDetail({ detail }: KasiReportDetailProps) {
+export function KasiReportDetail({ detail, swadayaCampaign }: KasiReportDetailProps) {
   const { report, photos, statusLogs } = detail;
   const reporter = getReporter(report.reporter);
   const hasPendingBudgetRequest = detail.budgetRequests.some(
     (request) => request.status === "submitted"
   );
+  const canOpenSwadaya =
+    report.status !== "resolved" && swadayaCampaign?.status !== "open";
 
   return (
     <section className="grid gap-6 xl:grid-cols-[1.4fr_0.8fr]">
@@ -257,6 +262,10 @@ export function KasiReportDetail({ detail }: KasiReportDetailProps) {
           hasBudgetRequests={detail.budgetRequests.length > 0}
           hasPendingBudgetRequest={hasPendingBudgetRequest}
         />
+
+        {canOpenSwadaya ? (
+          <SwadayaOpenCampaignButton reportId={report.id} />
+        ) : null}
 
         <Card>
           <CardHeader>

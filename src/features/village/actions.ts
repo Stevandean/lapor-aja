@@ -10,6 +10,8 @@ import { prisma } from "@/src/lib/prisma";
 import type { ActionState } from "@/src/types/action";
 import { recordSlaEvent } from "@/src/features/reports/slaEvents";
 import { notifyUsersInternal } from "@/src/features/reports/internalNotifications";
+import { hasReportProgressUpdates } from "@/src/features/reports/helpers";
+import { extendDueDateByPauseWindow } from "@/src/lib/sla";
 
 const allowedRoles = [
   "public",
@@ -69,39 +71,6 @@ function revalidateBudgetReviewPaths(reportId?: string | null) {
   }
 }
 
-async function hasReportProgressUpdates(reportId: string) {
-  const count = await prisma.reportProgressUpdate.count({
-    where: { reportId },
-  });
-
-  return count > 0;
-}
-
-function extendDueDateByPauseWindow(
-  dueAt: string | null,
-  pausedAt: string,
-  resumedAt: string
-) {
-  if (!dueAt) {
-    return null;
-  }
-
-  const dueTime = new Date(dueAt).getTime();
-  const pausedTime = new Date(pausedAt).getTime();
-  const resumedTime = new Date(resumedAt).getTime();
-
-  if (
-    Number.isNaN(dueTime) ||
-    Number.isNaN(pausedTime) ||
-    Number.isNaN(resumedTime)
-  ) {
-    return dueAt;
-  }
-
-  const pauseDuration = Math.max(0, resumedTime - pausedTime);
-
-  return new Date(dueTime + pauseDuration).toISOString();
-}
 
 export async function updateVillageUser(
   _prevState: ActionState,

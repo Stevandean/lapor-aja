@@ -44,9 +44,13 @@ type SlaReport = {
 
 type VillageSlaTableProps = {
   reports: SlaReport[];
+  openSwadayaCampaignReportIds?: string[];
 };
 
-export function VillageSlaTable({ reports }: VillageSlaTableProps) {
+export function VillageSlaTable({
+  reports,
+  openSwadayaCampaignReportIds = [],
+}: VillageSlaTableProps) {
   const [searchQuery, setSearchQuery] = useState("");
   const [dusunFilter, setDusunFilter] = useState("all");
   const [categoryFilter, setCategoryFilter] = useState("all");
@@ -268,7 +272,12 @@ export function VillageSlaTable({ reports }: VillageSlaTableProps) {
                     </td>
 
                     <td className="px-5 py-4">
-                      <SlaStatusBadge value={report.sla_status} />
+                      <SlaStatusBadge
+                        value={report.sla_status}
+                        hasActiveSwadayaCampaign={openSwadayaCampaignReportIds.includes(
+                          report.id
+                        )}
+                      />
                     </td>
 
                     <td className="px-5 py-4 text-muted-foreground">
@@ -302,7 +311,12 @@ export function VillageSlaTable({ reports }: VillageSlaTableProps) {
                     </p>
                   </div>
 
-                  <SlaStatusBadge value={report.sla_status} />
+                  <SlaStatusBadge
+                    value={report.sla_status}
+                    hasActiveSwadayaCampaign={openSwadayaCampaignReportIds.includes(
+                      report.id
+                    )}
+                  />
                 </div>
 
                 <div className="mt-4 grid grid-cols-2 gap-3 text-sm">

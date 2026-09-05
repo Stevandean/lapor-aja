@@ -4,6 +4,7 @@ import { ArrowLeft } from "lucide-react";
 import { Button } from "@/src/components/ui/Button";
 import { KasiReportDetail } from "@/src/features/kasi/components/KasiReportDetail";
 import { getKasiReportDetail } from "@/src/features/kasi/queries";
+import { getSwadayaCampaignForReport } from "@/src/features/reports/swadayaQueries";
 
 type KasiReportDetailPageProps = {
   params: Promise<{
@@ -15,7 +16,10 @@ export default async function KasiReportDetailPage({
   params,
 }: KasiReportDetailPageProps) {
   const { id } = await params;
-  const detail = await getKasiReportDetail(id);
+  const [detail, swadayaCampaign] = await Promise.all([
+    getKasiReportDetail(id),
+    getSwadayaCampaignForReport(id),
+  ]);
 
   if (!detail) {
     notFound();
@@ -55,7 +59,7 @@ export default async function KasiReportDetailPage({
         </Link>
       </section>
 
-      <KasiReportDetail detail={detail} />
+      <KasiReportDetail detail={detail} swadayaCampaign={swadayaCampaign} />
     </div>
   );
 }

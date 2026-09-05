@@ -22,6 +22,8 @@ import {
 import { ReportLocationPreviewSection } from "@/src/features/reports/components/ReportLocationPreviewSection";
 import { ReportSlaEventTimeline } from "@/src/features/reports/components/ReportSlaEventTimeline";
 import { ReportStatusTimeline } from "@/src/features/reports/components/ReportStatusTimeline";
+import { SwadayaOpenCampaignButton } from "@/src/features/reports/components/SwadayaOpenCampaignButton";
+import { getSwadayaCampaignForReport } from "@/src/features/reports/swadayaQueries";
 import { getVillageReportMonitoringDetail } from "@/src/features/village/queries";
 import {
   REPORT_PRIORITY_BADGE_CLASSES,
@@ -78,13 +80,20 @@ export default async function VillageReportDetailPage({
   params,
 }: VillageReportDetailPageProps) {
   const { id } = await params;
-  const detail = await getVillageReportMonitoringDetail(id);
+  const [detail, swadayaCampaign] = await Promise.all([
+    getVillageReportMonitoringDetail(id),
+    getSwadayaCampaignForReport(id),
+  ]);
 
   if (!detail) {
     notFound();
   }
 
   const { report } = detail;
+  const canOpenSwadaya =
+    Boolean(report.assigned_section_id) &&
+    report.status !== "resolved" &&
+    swadayaCampaign?.status !== "open";
 
   return (
     <div className="space-y-6">
@@ -420,6 +429,10 @@ export default async function VillageReportDetailPage({
         </div>
 
         <aside className="space-y-6">
+          {canOpenSwadaya ? (
+            <SwadayaOpenCampaignButton reportId={report.id} />
+          ) : null}
+
           <Card>
             <CardHeader>
               <CardTitle>Informasi Laporan</CardTitle>

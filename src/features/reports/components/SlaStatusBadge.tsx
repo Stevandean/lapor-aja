@@ -10,7 +10,17 @@ import { Badge } from "@/src/components/ui/Badge";
 // Cabang 2b: diekstrak dari VillageSlaTable.tsx supaya bisa dipakai ulang
 // di halaman watchlist Kasi dan Admin, bukan cuma sisi Kepala Desa/Sekdes.
 // Logika warna/label PERSIS sama, tidak diubah.
-export function SlaStatusBadge({ value }: { value: string | null }) {
+export function SlaStatusBadge({
+  value,
+  hasActiveSwadayaCampaign = false,
+}: {
+  value: string | null;
+  // Cabang 5a: "paused_budget" dipakai ulang untuk 2 sumber jeda yang
+  // berbeda (anggaran vs swadaya, lihat rasionalisasi di CLAUDE.md) --
+  // pembeda labelnya murni dari flag ini (dicek oleh pemanggil lewat
+  // getOpenSwadayaCampaignReportIds), BUKAN dari nilai `value` itu sendiri.
+  hasActiveSwadayaCampaign?: boolean;
+}) {
   if (!value) {
     return <Badge variant="muted">Belum Diatur</Badge>;
   }
@@ -54,7 +64,7 @@ export function SlaStatusBadge({ value }: { value: string | null }) {
     return (
       <Badge className="bg-warning-50 text-warning-700">
         <PauseCircle className="mr-1 h-3 w-3" />
-        Jeda Anggaran
+        {hasActiveSwadayaCampaign ? "Jeda Swadaya" : "Jeda Anggaran"}
       </Badge>
     );
   }

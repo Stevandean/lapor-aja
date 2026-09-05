@@ -164,3 +164,34 @@ export function calculateBusinessAwareDueDate(
 
   return current;
 }
+
+// Dipindah dari village/actions.ts (dipakai apa adanya, logika tidak
+// diubah) supaya bisa direuse oleh alur jeda anggaran (village/actions.ts)
+// MAUPUN jeda swadaya (reports/swadayaActions.ts) — keduanya sama-sama
+// menggeser tenggat maju sebesar durasi laporan "dijeda", cuma beda sumber
+// timestamp pause/resume-nya (ReportBudgetRequest vs SwadayaCampaign).
+export function extendDueDateByPauseWindow(
+  dueAt: string | null,
+  pausedAt: string,
+  resumedAt: string
+) {
+  if (!dueAt) {
+    return null;
+  }
+
+  const dueTime = new Date(dueAt).getTime();
+  const pausedTime = new Date(pausedAt).getTime();
+  const resumedTime = new Date(resumedAt).getTime();
+
+  if (
+    Number.isNaN(dueTime) ||
+    Number.isNaN(pausedTime) ||
+    Number.isNaN(resumedTime)
+  ) {
+    return dueAt;
+  }
+
+  const pauseDuration = Math.max(0, resumedTime - pausedTime);
+
+  return new Date(dueTime + pauseDuration).toISOString();
+}

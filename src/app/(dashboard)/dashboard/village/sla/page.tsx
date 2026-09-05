@@ -13,6 +13,7 @@ import { VillageSlaTable } from "@/src/features/village/components/VillageSlaTab
 import { VillageSlaAlertButton } from "@/src/features/village/components/VillageSlaAlertButton";
 import { VillageStatCard } from "@/src/features/village/components/VillageStatCard";
 import { getVillageSlaMonitoringData } from "@/src/features/village/queries";
+import { getOpenSwadayaCampaignReportIds } from "@/src/features/reports/swadayaQueries";
 import {
   Card,
   CardContent,
@@ -22,7 +23,11 @@ import {
 } from "@/src/components/ui/Card";
 
 export default async function VillageSlaPage() {
-  const { totalReports, slaStats, reports } = await getVillageSlaMonitoringData();
+  const [{ totalReports, slaStats, reports }, openSwadayaCampaignReportIds] =
+    await Promise.all([
+      getVillageSlaMonitoringData(),
+      getOpenSwadayaCampaignReportIds(),
+    ]);
 
   const onTimeCount = getCount(slaStats, "on_time");
   const atRiskCount = getCount(slaStats, "at_risk");
@@ -138,7 +143,10 @@ export default async function VillageSlaPage() {
         </CardHeader>
 
         <CardContent>
-          <VillageSlaTable reports={reports} />
+          <VillageSlaTable
+            reports={reports}
+            openSwadayaCampaignReportIds={openSwadayaCampaignReportIds}
+          />
         </CardContent>
       </Card>
     </div>

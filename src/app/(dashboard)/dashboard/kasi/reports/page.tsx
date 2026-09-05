@@ -1,6 +1,7 @@
 import type { ComponentProps } from "react";
 import { KasiReportTable } from "@/src/features/kasi/components/KasiReportTable";
 import { getKasiAssignedReports } from "@/src/features/kasi/queries";
+import { getOpenSwadayaCampaignReportIds } from "@/src/features/reports/swadayaQueries";
 import {
   Card,
   CardContent,
@@ -12,7 +13,8 @@ import {
 type KasiReportTableReports = ComponentProps<typeof KasiReportTable>["reports"];
 
 export default async function KasiReportsPage() {
-  const { missingSection, reports } = await getKasiAssignedReports();
+  const [{ missingSection, reports }, openSwadayaCampaignReportIds] =
+    await Promise.all([getKasiAssignedReports(), getOpenSwadayaCampaignReportIds()]);
 
   return (
     <div className="space-y-6">
@@ -42,6 +44,7 @@ export default async function KasiReportsPage() {
         <CardContent>
           <KasiReportTable
             reports={reports as KasiReportTableReports}
+            openSwadayaCampaignReportIds={openSwadayaCampaignReportIds}
             emptyTitle={
               missingSection ? "Penugasan seksi diperlukan" : undefined
             }

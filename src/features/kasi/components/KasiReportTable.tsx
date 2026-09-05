@@ -46,12 +46,14 @@ type KasiReportTableProps = {
   reports: KasiReportListItem[];
   emptyTitle?: string;
   emptyDescription?: string;
+  openSwadayaCampaignReportIds?: string[];
 };
 
 export function KasiReportTable({
   reports,
   emptyTitle = "Belum ada laporan ditugaskan",
   emptyDescription = "Laporan yang ditugaskan ke seksi Anda akan muncul di sini.",
+  openSwadayaCampaignReportIds = [],
 }: KasiReportTableProps) {
   const [searchQuery, setSearchQuery] = useState("");
   const [categoryFilter, setCategoryFilter] = useState("all");
@@ -267,7 +269,12 @@ export function KasiReportTable({
                       </td>
 
                       <td className="px-5 py-4">
-                        <SlaStatusBadge value={report.sla_status ?? null} />
+                        <SlaStatusBadge
+                          value={report.sla_status ?? null}
+                          hasActiveSwadayaCampaign={openSwadayaCampaignReportIds.includes(
+                            report.id
+                          )}
+                        />
                       </td>
 
                       <td className="px-5 py-4 text-muted-foreground">
@@ -307,7 +314,12 @@ export function KasiReportTable({
                       </p>
                     </div>
 
-                    <SlaStatusBadge value={report.sla_status ?? null} />
+                    <SlaStatusBadge
+                      value={report.sla_status ?? null}
+                      hasActiveSwadayaCampaign={openSwadayaCampaignReportIds.includes(
+                        report.id
+                      )}
+                    />
                   </div>
 
                   <div className="mt-3 flex flex-wrap gap-2">

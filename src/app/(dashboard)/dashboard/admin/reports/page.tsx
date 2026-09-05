@@ -12,6 +12,7 @@ import {
   getAdminReports,
   getActiveVillageSections,
 } from "@/src/features/admin/queries";
+import { getOpenSwadayaCampaignReportIds } from "@/src/features/reports/swadayaQueries";
 
 type AdminReportsPageProps = {
   searchParams: Promise<{
@@ -27,16 +28,18 @@ export default async function AdminReportsPage({
 }: AdminReportsPageProps) {
   const params = await searchParams;
 
-  const [{ categories, hamlets }, sections, reports] = await Promise.all([
-    getAdminReportReviewOptions(),
-    getActiveVillageSections(),
-    getAdminReports({
-      dusunId: params.dusun,
-      categoryId: params.kategori,
-      sectionId: params.seksi,
-      slaStatus: params.sla,
-    }),
-  ]);
+  const [{ categories, hamlets }, sections, reports, openSwadayaCampaignReportIds] =
+    await Promise.all([
+      getAdminReportReviewOptions(),
+      getActiveVillageSections(),
+      getAdminReports({
+        dusunId: params.dusun,
+        categoryId: params.kategori,
+        sectionId: params.seksi,
+        slaStatus: params.sla,
+      }),
+      getOpenSwadayaCampaignReportIds(),
+    ]);
 
   return (
     <div className="space-y-6">
@@ -70,7 +73,10 @@ export default async function AdminReportsPage({
         </CardHeader>
 
         <CardContent>
-          <AdminReportTable reports={reports} />
+          <AdminReportTable
+            reports={reports}
+            openSwadayaCampaignReportIds={openSwadayaCampaignReportIds}
+          />
         </CardContent>
       </Card>
     </div>

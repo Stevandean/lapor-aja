@@ -31,6 +31,7 @@ type AdminReport = {
 
 type AdminReportTableProps = {
   reports: AdminReport[];
+  openSwadayaCampaignReportIds?: string[];
 };
 
 type RelationSummary = {
@@ -40,7 +41,10 @@ type RelationSummary = {
   recurrenceAsTarget: number;
 };
 
-export function AdminReportTable({ reports }: AdminReportTableProps) {
+export function AdminReportTable({
+  reports,
+  openSwadayaCampaignReportIds = [],
+}: AdminReportTableProps) {
   if (reports.length === 0) {
     return (
       <div className="rounded-2xl border border-dashed border-border bg-muted/40 p-10 text-center">
@@ -117,7 +121,12 @@ export function AdminReportTable({ reports }: AdminReportTableProps) {
                 </td>
 
                 <td className="px-5 py-4">
-                  <SlaStatusBadge value={report.sla_status ?? null} />
+                  <SlaStatusBadge
+                    value={report.sla_status ?? null}
+                    hasActiveSwadayaCampaign={openSwadayaCampaignReportIds.includes(
+                      report.id
+                    )}
+                  />
                 </td>
 
                 <td className="px-5 py-4 text-muted-foreground">
@@ -153,7 +162,12 @@ export function AdminReportTable({ reports }: AdminReportTableProps) {
                 <RelationBadges summary={report.relation_summary} />
               </div>
 
-              <SlaStatusBadge value={report.sla_status ?? null} />
+              <SlaStatusBadge
+                value={report.sla_status ?? null}
+                hasActiveSwadayaCampaign={openSwadayaCampaignReportIds.includes(
+                  report.id
+                )}
+              />
             </div>
 
             <div className="mt-3 flex flex-wrap gap-2">
