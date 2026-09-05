@@ -72,11 +72,19 @@ Semua fitur berikut **WAJIB** dikerjakan (bukan opsional), didesain rule-based
   syarat minimum 3 laporan, skor komposit 70% tepat waktu + 30% kecepatan,
   disimpan sebagai `PerformanceSnapshot`, di-generate manual lewat tombol.
 
-### Cabang 4 — Transparansi & Akuntabilitas
-- 4a. Riwayat jejak waktu (audit trail) — SUDAH ADA via `report_status_logs`
-  dan `report_sla_events`, tinggal dipastikan lengkap
-- 4b. Ekspor laporan evaluasi kinerja berkala (PDF/Excel)
-- 4c. Statistik kepatuhan SLA untuk publik (halaman ringkas terbuka warga)
+### Cabang 4 — Transparansi & Akuntabilitas — **SELESAI (2026-09-05)**
+- [x] **4a. SELESAI** — Audit trail `report_status_logs`/`report_sla_events`
+  sudah ada sejak Cabang 1-3, TAPI investigasi menemukan 2 aksi baru yang
+  belum tercatat sama sekali (alert SLA terkirim, predikat kinerja
+  di-generate) — sekarang keduanya tercatat. Detail di "Progres Sejauh
+  Ini".
+- [x] **4b. SELESAI** — Ekspor evaluasi kinerja PDF (ringkasan periode,
+  render HTML→PDF via Playwright) dan Excel (`.xlsx` asli via `exceljs`,
+  detail per laporan), dengan toggle "sertakan data contoh" (default OFF).
+  Detail di "Progres Sejauh Ini".
+- [x] **4c. SELESAI** — Halaman publik `/statistik-sla`, ANONIM SUNGGUHAN
+  (tanpa login sama sekali), statistik agregat saja, SELALU mengecualikan
+  data demo. Detail di "Progres Sejauh Ini".
 
 ### Cabang 5 — Percepatan Penyelesaian via Swadaya Masyarakat (fitur baru
 total, insight dari wawancara narasumber)
@@ -920,7 +928,150 @@ total) DAN data historis dummy — dikerjakan lewat 6 tugas berurutan.
   label tidak terasosiasi — diperbaiki dengan menambah `name="tipe"`/
   `name="periode"` di `VillagePerformanceFilterBar.tsx`.
 
-- [ ] Cabang 4-5 — belum dikerjakan, menyusul di sesi berikutnya.
+**Cabang 4 — SELESAI (2026-09-05)**, Transparansi & Akuntabilitas. Diawali
+investigasi read-only (5 pertanyaan: reuse Playwright vs library PDF baru,
+opsi Excel, kelayakan halaman tanpa login, cakupan audit trail aksi baru
+Cabang 1-3, risiko bias data demo) sebelum keputusan diambil dan kode
+ditulis — 5 keputusan berikut dicatat SEBELUM implementasi dimulai:
+
+- **KEPUTUSAN 1 — `Report.isDemoData` (Boolean, default `false`), BUKAN
+  cuma pola nama "Demo -" yang dipakai Cabang 3.** Migration baru
+  (`prisma/migrations/20260905053131_add_demo_flag_and_predicate_generated_by/`),
+  di-UPDATE ke `true` untuk 83 laporan demo (join ke `reporter.fullName`
+  berawalan "Demo -") lewat script sekali-jalan, sisanya (1 laporan asli)
+  tetap `false`. **Alasan penting untuk sidang**: sebelum kolom ini ada,
+  SATU-SATUNYA cara membedakan data demo dari data asli adalah join manual
+  ke nama pelapor — rapuh (typo nama, ganti pola penamaan di sesi lain,
+  dsb bisa diam-diam merusak filter) dan mahal (butuh join setiap query).
+  Kolom boolean eksplisit di tabel `Report` sendiri jauh lebih aman dan
+  cepat untuk keperluan yang sifatnya kritis-benar (4c publik WAJIB selalu
+  benar mengecualikan data demo).
+- **KEPUTUSAN 2 — `PerformanceSnapshot.generatedBy` (nullable, FK ke
+  `Profile`).** Predikat Juni 2026 dari sesi Cabang 3 (dibuat akun uji
+  yang sudah dihapus) TIDAK di-backfill — dibiarkan `null` apa adanya,
+  bukan bug. Predikat baru (Juli 2026 dan seterusnya) otomatis terisi
+  dengan siapa yang klik tombol "Tentukan Predikat Periode Ini".
+- **KEPUTUSAN 3 — 4b (ekspor internal) pakai toggle "sertakan data
+  contoh" (default OFF, boleh ON); 4c (halaman publik) TIDAK PERNAH punya
+  toggle, SELALU exclude data demo, hardcode di query.** Alasan bedanya:
+  4b dipakai staf desa sendiri yang tahu konteks data demo ada dan kenapa
+  (berguna untuk demo sistem ke penguji/dosen pembimbing dengan angka yang
+  "hidup"), sementara 4c dilihat masyarakat umum yang TIDAK tahu ada data
+  demo sama sekali — membiarkan opsi apapun untuk menampilkannya ke publik
+  berisiko menyesatkan warga soal kinerja desa yang sebenarnya.
+- **KEPUTUSAN 4 — halaman 4c genuinely ANONIM (tanpa login sama sekali),
+  bukan "role public yang tetap wajib login".** Diinvestigasi dulu:
+  ternyata sudah ada presedan halaman publik tanpa login
+  (`(public)/reports/create` — warga bisa kirim laporan tanpa akun,
+  `getProfile()` cuma dipakai untuk redirect STAF yang kebetulan sedang
+  login, bukan gerbang akses). `/statistik-sla` mengikuti pola yang
+  sama persis: tidak ada `getProfile()`/`requireAuth()`/`requireRole()`
+  sama sekali di halaman maupun query-nya. **Jebakan yang ditemukan &
+  diperbaiki saat build**: halaman yang tidak memanggil cookies/auth
+  apapun otomatis di-treat Next.js App Router sebagai STATIS dan
+  di-prerender SEKALI saat `npm run build` — untuk halaman statistik yang
+  wajib selalu menampilkan data terkini, ini serius (angka beku sejak
+  build terakhir, bukan cuma soal SEO). Diperbaiki dengan
+  `export const dynamic = "force-dynamic"` di halaman.
+- **KEPUTUSAN 5 — Playwright (sudah ada sebagai devDependency untuk E2E
+  testing sejak fase migrasi) DIPINDAH ke `dependencies` dan DIREUSE untuk
+  render PDF, TIDAK install `puppeteer` terpisah.** `exceljs` diinstall
+  baru untuk `.xlsx` asli (CSV yang sudah ada di Cabang 2 tidak bisa
+  dicontoh untuk Excel — `.xlsx` itu ZIP berisi banyak file XML, beda
+  kelas masalah dari CSV yang cuma teks berdelimiter). **Rasionalisasi
+  Playwright, PENTING untuk sidang kalau ditanya "kenapa bukan library PDF
+  biasa"**: Chromium milik Playwright (~700MB) sudah ter-download di mesin
+  ini untuk keperluan testing — install `puppeteer` akan men-download
+  Chromium KEDUA yang fungsinya identik, murni pemborosan disk. Trade-off
+  yang WAJIB diketahui: proyek ini belum punya `Dockerfile`/`vercel.json`,
+  jadi belum terverifikasi apakah cara deploy production nanti akan tetap
+  men-download browser Chromium Playwright saat install (beberapa
+  pipeline CI/deploy sengaja skip download browser atau prune cache) —
+  risiko ini dicatat juga di README.md (bagian "Deployment risk").
+
+**Implementasi 4a (audit trail)**: `createReportStatusLog()`
+(`src/features/reports/statusLogs.ts`) dapat parameter opsional
+`changedBy` — **ini memperbaiki bug laten yang ditemukan sambil kerja**:
+sebelumnya fungsi ini SELALU `return` diam-diam (skip nulis log) kalau
+tidak ada sesi login (`getProfile()` return `null`), padahal endpoint cron
+`/api/notifications/sla-alerts` memanggil alur ini TANPA sesi sama sekali
+(otorisasinya bearer secret, bukan NextAuth) — kalau tidak diperbaiki,
+alert yang dipicu cron tidak akan PERNAH punya audit trail, cuma yang
+dipicu tombol manual (ada sesi) yang tercatat. `sendSlaAlertNotifications()`
+sekarang menulis 1 baris `report_status_logs` per alert yang benar-benar
+terkirim (`oldStatus === newStatus` dengan sengaja — status alur laporan
+TIDAK berubah, cuma alert terkirim; `notifyReporter`/`notifyWhatsApp`
+dimatikan supaya tidak memicu notifikasi "status berubah" palsu ke
+pelapor). `generatePerformancePredicate()` mengisi `generatedBy`.
+**Koreksi penting**: instruksi awal menyebut verifikasi harus muncul di
+`ReportSlaEventTimeline.tsx` — setelah dibaca, komponen itu ternyata HANYA
+merender tabel `report_sla_events` (event `deadline_started`/
+`paused_budget`/dst), BUKAN `report_status_logs`. Entry alert yang baru
+ditulis justru tampil di **`ReportStatusTimeline.tsx`** (komponen terpisah
+yang sudah ada sebelumnya, dipakai di 5 halaman detail laporan berbeda) —
+dicatat di sini supaya sesi lain tidak salah tempat mencari kalau perlu
+menelusuri ulang.
+
+**Implementasi 4b (ekspor)**: `getPerformanceExportData()`
+(`village/queries/performance.ts`) — query terpisah dari 3a/3b, menerima
+`includeDemo: boolean` yang memfilter `isDemoData` di level `where` Prisma
+untuk SELURUH angka (ringkasan, breakdown, DAN baris detail), bukan cuma
+disembunyikan dari tampilan. 2 route baru: `GET /api/exports/performance/
+pdf` (render HTML lewat `buildPerformancePdfHtml()` di
+`village/performanceExport.ts`, jadi PDF via `page.setContent()` +
+`page.pdf()`, browser Chromium dibuka-tutup per request) dan
+`GET /api/exports/performance/excel` (2 sheet: "Ringkasan" berisi kartu
+statistik + breakdown seksi/kategori, "Detail Laporan" satu baris per
+laporan dengan kolom "Data Contoh: Ya/Tidak" — transparan kalau toggle
+di-ON). Keduanya dibatasi role Kepala Desa/Sekdes, parameter query
+`tipe`/`periode` sinkron dengan filter halaman, `demo=1|0` dari toggle.
+
+**Implementasi 4c (halaman publik)**: `/statistik-sla`
+(`src/app/(public)/statistik-sla/page.tsx` + `src/features/public/
+queries.ts`, feature folder baru) — total laporan ditangani, persen tepat
+waktu, breakdown per kategori, all-time (tidak difilter periode, sengaja
+sesederhana mungkin sesuai deskripsi awal "halaman ringkas"). Tidak ada
+detail per laporan/nomor laporan/nama pelapor/lokasi. Link ditambahkan di
+2 tempat: halaman login (`AuthLayout.tsx` dapat slot `secondaryLink`
+opsional baru) dan halaman `/reports/create`.
+
+**Diverifikasi dengan data nyata lewat browser (Playwright), login sebagai
+akun Kepala Desa PERMANEN** (`kepaladesa@gmail.com` — dibuat sesi ini
+sekalian, lihat catatan akun baru di bawah): (1) laporan uji overdue
+dibuat → klik "Send SLA Alerts" → dikonfirmasi baris `report_status_logs`
+baru tersimpan dengan `changedBy` = ID Kepala Desa yang klik DAN teks
+alert-nya tampil sungguhan di halaman detail laporan; (2) generate
+predikat untuk periode BARU (Juli 2026) → `generatedBy` terisi benar,
+riwayat predikat menampilkan "oleh Kepala Desa Kucur"; (3) 1 laporan ASLI
+(bukan demo) sengaja ditambahkan ke Juni 2026 (bulan yang sudah punya 23
+laporan demo) khusus untuk pembuktian toggle — Excel toggle OFF
+menampilkan total 1 (cuma laporan asli), toggle ON menampilkan total 24
+(23 demo + 1 asli), PDF dikonfirmasi file valid (`%PDF` magic bytes); (4)
+halaman `/statistik-sla` dibuka di browser context ANONIM baru (tanpa
+cookie sesi sama sekali) → berhasil diakses, menampilkan "Laporan
+Ditangani: 1" (BUKAN 74 yang merupakan total termasuk demo) — angka ini
+dibandingkan langsung dengan angka ekspor internal toggle-ON (24) untuk
+periode yang sama, terbukti berbeda nyata, bukan toggle kosmetik. Semua 25
+assertion lolos. **Insiden lingkungan (bukan bug kode)**: percobaan
+pertama gagal total karena cache dev server Turbopack (folder `.next`)
+korup/stale setelah rangkaian panjang migration+generate+build sebelum
+dev server dinyalakan — SEMUA halaman `/dashboard/village/*` sempat 404
+padahal filenya ada; diperbaiki dengan hapus `.next` + restart bersih.
+Data uji (2 laporan sementara, 1 profil pelapor uji, baris alert/
+notifikasi/status-log terkait) dibersihkan total setelah verifikasi — DB
+kembali ke baseline Cabang 3 (84 laporan: 83 demo + 1 asli) plus 2 baris
+`PerformanceSnapshot` (Juni + Juli 2026) yang SENGAJA dibiarkan tersimpan
+sebagai artefak demo yang legitimate, sama seperti keputusan Cabang 3.
+
+**Akun baru sesi ini (PERMANEN, bukan uji)**: `kepaladesa@gmail.com`
+(password `KepalaDesa2026!`, role `kepala_desa`) dan `sekdes@gmail.com`
+(password `Sekdes2026!`, role `sekdes`) — sebelumnya TIDAK ADA akun
+kepala_desa/sekdes permanen sama sekali di database, jadi seluruh halaman
+Kepala Desa/Sekdes (termasuk `/dashboard/village/performance` dari Cabang
+3) tidak bisa dicoba langsung tanpa membuat akun uji sekali pakai setiap
+sesi. Sekarang bisa langsung dipakai untuk demo/sidang.
+
+- [ ] Cabang 5 — belum dikerjakan, menyusul di sesi berikutnya.
 
 ## Aturan Kerja untuk Claude Code
 
