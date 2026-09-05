@@ -28,6 +28,7 @@ import { ReportStatusTimeline } from "@/src/features/reports/components/ReportSt
 import { ReportSlaEventTimeline } from "@/src/features/reports/components/ReportSlaEventTimeline";
 import { ReportLocationPreviewSection } from "@/src/features/reports/components/ReportLocationPreviewSection";
 import { SwadayaOpenCampaignButton } from "@/src/features/reports/components/SwadayaOpenCampaignButton";
+import { SwadayaSection } from "@/src/features/reports/components/SwadayaSection";
 import { getSwadayaCampaignForReport } from "@/src/features/reports/swadayaQueries";
 import { AdminFollowUpProgressPanel } from "@/src/features/admin/components/AdminFollowUpProgressPanel";
 
@@ -408,6 +409,10 @@ export default async function AdminReportDetailPage({
             reportId={report.id}
             currentStatus={report.status}
           />
+
+          {swadayaCampaign ? (
+            <SwadayaSection campaign={swadayaCampaign} canManage />
+          ) : null}
 
           {canOpenSwadaya ? (
             <SwadayaOpenCampaignButton reportId={report.id} />

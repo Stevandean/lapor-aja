@@ -19,6 +19,7 @@ import {
 import { ReportLocationPreviewSection } from "@/src/features/reports/components/ReportLocationPreviewSection";
 import { ReportStatusTimeline } from "@/src/features/reports/components/ReportStatusTimeline";
 import { SwadayaOpenCampaignButton } from "@/src/features/reports/components/SwadayaOpenCampaignButton";
+import { SwadayaSection } from "@/src/features/reports/components/SwadayaSection";
 import type { SwadayaCampaignDetail } from "@/src/features/reports/swadayaQueries";
 import { KasiReportActionPanel } from "@/src/features/kasi/components/KasiReportActionPanel";
 import {
@@ -262,6 +263,10 @@ export function KasiReportDetail({ detail, swadayaCampaign }: KasiReportDetailPr
           hasBudgetRequests={detail.budgetRequests.length > 0}
           hasPendingBudgetRequest={hasPendingBudgetRequest}
         />
+
+        {swadayaCampaign ? (
+          <SwadayaSection campaign={swadayaCampaign} canManage={false} />
+        ) : null}
 
         {canOpenSwadaya ? (
           <SwadayaOpenCampaignButton reportId={report.id} />

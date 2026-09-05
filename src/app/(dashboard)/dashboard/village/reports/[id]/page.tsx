@@ -23,6 +23,7 @@ import { ReportLocationPreviewSection } from "@/src/features/reports/components/
 import { ReportSlaEventTimeline } from "@/src/features/reports/components/ReportSlaEventTimeline";
 import { ReportStatusTimeline } from "@/src/features/reports/components/ReportStatusTimeline";
 import { SwadayaOpenCampaignButton } from "@/src/features/reports/components/SwadayaOpenCampaignButton";
+import { SwadayaSection } from "@/src/features/reports/components/SwadayaSection";
 import { getSwadayaCampaignForReport } from "@/src/features/reports/swadayaQueries";
 import { getVillageReportMonitoringDetail } from "@/src/features/village/queries";
 import {
@@ -429,6 +430,10 @@ export default async function VillageReportDetailPage({
         </div>
 
         <aside className="space-y-6">
+          {swadayaCampaign ? (
+            <SwadayaSection campaign={swadayaCampaign} canManage />
+          ) : null}
+
           {canOpenSwadaya ? (
             <SwadayaOpenCampaignButton reportId={report.id} />
           ) : null}

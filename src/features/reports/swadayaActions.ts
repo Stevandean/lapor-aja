@@ -2,12 +2,32 @@
 
 import { revalidatePath } from "next/cache";
 import { redirect } from "next/navigation";
+import fs from "node:fs/promises";
+import path from "node:path";
 import { getProfile } from "@/src/lib/auth/getProfile";
 import { getDashboardRouteByRole, ROUTES } from "@/src/lib/constants/routes";
 import { prisma } from "@/src/lib/prisma";
 import { createReportStatusLog } from "@/src/features/reports/statusLogs";
 import { recordSlaEvent } from "@/src/features/reports/slaEvents";
+import { hasReportProgressUpdates } from "@/src/features/reports/helpers";
+import { extendDueDateByPauseWindow } from "@/src/lib/sla";
 import type { ActionState } from "@/src/types/action";
+
+const UPLOADS_ROOT = path.join(process.cwd(), "public", "uploads", "swadaya");
+
+async function requireVillageLeadershipOrAdmin() {
+  const profile = await getProfile();
+
+  if (!profile) {
+    redirect(ROUTES.LOGIN);
+  }
+
+  if (!["admin", "kepala_desa", "sekdes"].includes(profile.role)) {
+    redirect(getDashboardRouteByRole(profile.role));
+  }
+
+  return profile;
+}
 
 function revalidateSwadayaPaths(reportId: string) {
   revalidatePath(`/dashboard/admin/reports/${reportId}`);
@@ -244,4 +264,186 @@ export async function submitSwadayaContribution(
     status: "success",
     message: "Terima kasih, kontribusi Anda sudah tercatat dan menunggu verifikasi.",
   };
+}
+
+// Cabang 5d, tahap 1/2: pending -> verified. Cuma mengonfirmasi janji
+// kontribusi itu sah/masuk akal — BELUM berarti barang/dana sudah di
+// tangan desa (itu tahap "receive" terpisah di bawah).
+export async function verifySwadayaContribution(
+  _prevState: ActionState,
+  formData: FormData
+): Promise<ActionState> {
+  const profile = await requireVillageLeadershipOrAdmin();
+  const contributionId = String(formData.get("contribution_id") || "");
+
+  const contribution = await prisma.swadayaContribution.findUnique({
+    where: { id: contributionId },
+    include: { campaign: { select: { reportId: true } } },
+  });
+
+  if (!contribution) {
+    return { status: "error", message: "Kontribusi tidak ditemukan." };
+  }
+
+  if (contribution.status !== "pending") {
+    return {
+      status: "error",
+      message: "Kontribusi ini sudah tidak menunggu verifikasi.",
+    };
+  }
+
+  await prisma.swadayaContribution.update({
+    where: { id: contributionId },
+    data: { status: "verified", verifiedBy: profile.id, verifiedAt: new Date() },
+  });
+
+  revalidateSwadayaPaths(contribution.campaign.reportId);
+
+  return { status: "success", message: "Kontribusi berhasil diverifikasi." };
+}
+
+// Cabang 5d, tahap 2/2: verified -> received. Ini peristiwa TERPISAH dari
+// verifikasi (bisa beda waktu, beda orang) — menandai barang/dana/tenaga
+// itu SUNGGUH sudah diserahkan ke desa, opsional dengan foto bukti.
+export async function receiveSwadayaContribution(
+  _prevState: ActionState,
+  formData: FormData
+): Promise<ActionState> {
+  const profile = await requireVillageLeadershipOrAdmin();
+  const contributionId = String(formData.get("contribution_id") || "");
+  const receivedNote = String(formData.get("received_note") || "").trim();
+  const proofPhoto = formData.get("proof_photo");
+
+  const contribution = await prisma.swadayaContribution.findUnique({
+    where: { id: contributionId },
+    include: { campaign: { select: { reportId: true } } },
+  });
+
+  if (!contribution) {
+    return { status: "error", message: "Kontribusi tidak ditemukan." };
+  }
+
+  if (contribution.status !== "verified") {
+    return {
+      status: "error",
+      message: "Kontribusi harus diverifikasi dulu sebelum dikonfirmasi diterima.",
+    };
+  }
+
+  let proofPhotoPath: string | null = null;
+
+  if (proofPhoto instanceof File && proofPhoto.size > 0) {
+    if (!["image/jpeg", "image/png", "image/webp"].includes(proofPhoto.type)) {
+      return {
+        status: "error",
+        message: "Foto bukti harus berformat JPG, PNG, atau WEBP.",
+      };
+    }
+
+    if (proofPhoto.size > 10 * 1024 * 1024) {
+      return { status: "error", message: "Ukuran foto bukti maksimal 10MB." };
+    }
+
+    const dir = path.join(UPLOADS_ROOT, contribution.campaignId, contribution.id);
+    await fs.mkdir(dir, { recursive: true });
+
+    const extension = proofPhoto.name.split(".").pop() || "jpg";
+    const fileName = `${crypto.randomUUID()}.${extension}`;
+    const filePath = `/uploads/swadaya/${contribution.campaignId}/${contribution.id}/${fileName}`;
+
+    const buffer = Buffer.from(await proofPhoto.arrayBuffer());
+    await fs.writeFile(path.join(dir, fileName), buffer);
+    proofPhotoPath = filePath;
+  }
+
+  await prisma.swadayaContribution.update({
+    where: { id: contributionId },
+    data: {
+      status: "received",
+      receivedBy: profile.id,
+      receivedAt: new Date(),
+      receivedNote: receivedNote || null,
+      ...(proofPhotoPath ? { proofPhotoPath } : {}),
+    },
+  });
+
+  revalidateSwadayaPaths(contribution.campaign.reportId);
+
+  return { status: "success", message: "Kontribusi berhasil dikonfirmasi diterima." };
+}
+
+// Cabang 5d: tutup campaign secara manual, lalu resume SLA (Tugas 2 poin
+// 3) memakai extendDueDateByPauseWindow yang sama, basisnya
+// openedAt/closedAt campaign ini (BUKAN lagi timestamp ReportBudgetRequest
+// seperti alur anggaran biasa).
+export async function closeSwadayaCampaign(
+  _prevState: ActionState,
+  formData: FormData
+): Promise<ActionState> {
+  await requireVillageLeadershipOrAdmin();
+
+  const campaignId = String(formData.get("campaign_id") || "");
+  const closedReason = String(formData.get("closed_reason") || "").trim();
+
+  const campaign = await prisma.swadayaCampaign.findUnique({
+    where: { id: campaignId },
+    include: {
+      report: { select: { id: true, status: true, resolutionDueAt: true } },
+    },
+  });
+
+  if (!campaign) {
+    return { status: "error", message: "Galang swadaya tidak ditemukan." };
+  }
+
+  if (campaign.status !== "open") {
+    return { status: "error", message: "Galang swadaya ini sudah ditutup sebelumnya." };
+  }
+
+  const now = new Date();
+
+  await prisma.swadayaCampaign.update({
+    where: { id: campaignId },
+    data: { status: "closed", closedAt: now, closedReason: closedReason || null },
+  });
+
+  const { report } = campaign;
+
+  if (report.status === "waiting_budget") {
+    const nextReportStatus = (await hasReportProgressUpdates(report.id))
+      ? "in_progress"
+      : "handled_by_village";
+    const nextResolutionDueAt = extendDueDateByPauseWindow(
+      report.resolutionDueAt?.toISOString() ?? null,
+      campaign.openedAt.toISOString(),
+      now.toISOString()
+    );
+
+    await prisma.report.update({
+      where: { id: report.id },
+      data: {
+        status: nextReportStatus,
+        resolutionDueAt: nextResolutionDueAt ? new Date(nextResolutionDueAt) : null,
+      },
+    });
+
+    await createReportStatusLog({
+      reportId: report.id,
+      oldStatus: "waiting_budget",
+      newStatus: nextReportStatus,
+      note: "Galang swadaya ditutup, SLA dilanjutkan.",
+    });
+
+    await recordSlaEvent({
+      reportId: report.id,
+      eventType: "resumed_budget",
+      previousResolutionDueAt: report.resolutionDueAt?.toISOString() ?? null,
+      newResolutionDueAt: nextResolutionDueAt,
+      note: "SLA dilanjutkan setelah galang swadaya masyarakat ditutup.",
+    });
+  }
+
+  revalidateSwadayaPaths(report.id);
+
+  return { status: "success", message: "Galang swadaya berhasil ditutup." };
 }
