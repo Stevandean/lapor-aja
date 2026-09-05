@@ -34,9 +34,19 @@ export default async function VillageSlaPage() {
   const criticalCount = getCount(slaStats, "critical");
   const overdueCount = getCount(slaStats, "overdue");
   const completedCount = getCount(slaStats, "completed");
-  const pausedBudgetCount = getCount(slaStats, "paused_budget");
   const mergedCount = getCount(slaStats, "merged");
   const notSetCount = getCount(slaStats, "not_set");
+
+  // Cabang 5a: "paused_budget" dipakai ulang untuk 2 sumber jeda (lihat
+  // rasionalisasi di CLAUDE.md) — kartu statistik dipecah dua supaya
+  // konsisten dengan label per-baris di tabel di bawahnya, bukan cuma
+  // menghitung semuanya sebagai "Jeda Anggaran".
+  const pausedSwadayaCount = reports.filter(
+    (report) =>
+      report.sla_status === "paused_budget" &&
+      openSwadayaCampaignReportIds.includes(report.id)
+  ).length;
+  const pausedBudgetCount = getCount(slaStats, "paused_budget") - pausedSwadayaCount;
 
   return (
     <div className="space-y-6">
@@ -75,7 +85,7 @@ export default async function VillageSlaPage() {
         </div>
       )}
 
-      <section className="grid gap-4 sm:grid-cols-2 xl:grid-cols-8">
+      <section className="grid gap-4 sm:grid-cols-2 xl:grid-cols-9">
         <VillageStatCard
           title="Total Laporan"
           value={totalReports}
@@ -122,6 +132,13 @@ export default async function VillageSlaPage() {
           title="Jeda Anggaran"
           value={pausedBudgetCount}
           description="SLA dijeda karena anggaran."
+          icon={<PauseCircle className="h-5 w-5" />}
+        />
+
+        <VillageStatCard
+          title="Jeda Swadaya"
+          value={pausedSwadayaCount}
+          description="SLA dijeda karena galang swadaya."
           icon={<PauseCircle className="h-5 w-5" />}
         />
 
