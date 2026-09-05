@@ -143,3 +143,105 @@ export async function openSwadayaCampaign(
 
   return { status: "success", message: "Galang swadaya berhasil dibuka." };
 }
+
+const CONTRIBUTION_TYPES = ["uang", "material", "logistik", "tenaga"] as const;
+
+// Keputusan 2: kontribusi WAJIB login (semua role, tidak dibatasi cuma
+// "public") — contributorId/Name/Phone SELALU diambil dari sesi, TIDAK
+// PERNAH dari input form (form-nya sendiri cuma menampilkan readonly),
+// supaya tidak ada celah orang mengisi identitas orang lain.
+export async function submitSwadayaContribution(
+  _prevState: ActionState,
+  formData: FormData
+): Promise<ActionState> {
+  const profile = await getProfile();
+
+  if (!profile) {
+    redirect(
+      `${ROUTES.LOGIN}?redirect=${encodeURIComponent("/dashboard/public/swadaya")}`
+    );
+  }
+
+  const campaignId = String(formData.get("campaign_id") || "");
+  const type = String(formData.get("type") || "");
+
+  if (!campaignId) {
+    return { status: "error", message: "Galang swadaya tidak ditemukan." };
+  }
+
+  if (!CONTRIBUTION_TYPES.includes(type as (typeof CONTRIBUTION_TYPES)[number])) {
+    return { status: "error", message: "Jenis kontribusi tidak valid." };
+  }
+
+  const campaign = await prisma.swadayaCampaign.findUnique({
+    where: { id: campaignId },
+    select: { id: true, reportId: true, status: true },
+  });
+
+  if (!campaign || campaign.status !== "open") {
+    return {
+      status: "error",
+      message: "Galang swadaya ini sudah tidak menerima kontribusi baru.",
+    };
+  }
+
+  let amount: number | null = null;
+  let itemDescription: string | null = null;
+  let itemQuantity: number | null = null;
+  let itemUnit: string | null = null;
+  let availabilityNote: string | null = null;
+
+  if (type === "uang") {
+    amount = Number(formData.get("amount"));
+
+    if (!Number.isFinite(amount) || amount <= 0) {
+      return { status: "error", message: "Jumlah donasi tidak valid." };
+    }
+  } else if (type === "material" || type === "logistik") {
+    itemDescription = String(formData.get("item_description") || "").trim();
+    const quantityRaw = Number(formData.get("item_quantity"));
+    itemUnit = String(formData.get("item_unit") || "").trim();
+
+    if (!itemDescription || !Number.isFinite(quantityRaw) || quantityRaw <= 0 || !itemUnit) {
+      return {
+        status: "error",
+        message: "Lengkapi deskripsi, jumlah, dan satuan barang.",
+      };
+    }
+
+    itemQuantity = quantityRaw;
+  } else {
+    availabilityNote = String(formData.get("availability_note") || "").trim();
+
+    if (!availabilityNote) {
+      return {
+        status: "error",
+        message: "Jelaskan ketersediaan waktu/tenaga Anda.",
+      };
+    }
+  }
+
+  await prisma.swadayaContribution.create({
+    data: {
+      campaignId,
+      contributorId: profile.id,
+      contributorName: profile.full_name,
+      contributorPhone: profile.phone_number,
+      type: type as (typeof CONTRIBUTION_TYPES)[number],
+      amount,
+      itemDescription,
+      itemQuantity,
+      itemUnit,
+      availabilityNote,
+      status: "pending",
+    },
+  });
+
+  revalidateSwadayaPaths(campaign.reportId);
+  revalidatePath(`/dashboard/public/swadaya/${campaignId}`);
+
+  return {
+    status: "success",
+    message: "Terima kasih, kontribusi Anda sudah tercatat dan menunggu verifikasi.",
+  };
+}

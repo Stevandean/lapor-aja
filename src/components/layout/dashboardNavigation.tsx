@@ -7,6 +7,7 @@ import {
   Database,
   FileText,
   Gauge,
+  HeartHandshake,
   Home,
   Map,
   Settings,
@@ -202,6 +203,11 @@ export function getDashboardNavigation(role: UserRole): DashboardNavItem[] {
       label: "Laporan Saya",
       href: "/dashboard/public/reports",
       icon: ClipboardList,
+    },
+    {
+      label: "Bantu Warga Lain",
+      href: "/dashboard/public/swadaya",
+      icon: HeartHandshake,
     },
     settingsItem,
   ];
