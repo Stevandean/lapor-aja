@@ -367,6 +367,7 @@ model Profile {
   swadayaCampaignsOpened SwadayaCampaign[]
   contributionsMade      SwadayaContribution[]        @relation("ContributorProfile")
   contributionsVerified  SwadayaContribution[]        @relation("VerifierProfile")
+  contributionsReceived  SwadayaContribution[]        @relation("ReceiverProfile")
   performanceSnapshotsGenerated PerformanceSnapshot[] @relation("PerformanceSnapshotGeneratedBy")
 
   @@map("profiles")
@@ -880,11 +881,21 @@ model SwadayaContribution {
   status           ContributionStatus @default(pending)
   verifiedBy       String?            @map("verified_by") @db.Char(36)
   verifiedAt       DateTime?          @map("verified_at")
+  // BARU — Cabang 5d: tahap "diterima" dicatat TERPISAH dari "diverifikasi"
+  // (peristiwa berbeda, bisa beda waktu dan beda orang — verifikasi cuma
+  // mengonfirmasi janji kontribusi, "diterima" berarti barang/dana/tenaga
+  // itu SUNGGUH sudah diserahkan). Semua nullable karena cuma terisi saat
+  // status baris ini sudah/berubah jadi `received`.
+  receivedBy       String?            @map("received_by") @db.Char(36)
+  receivedAt       DateTime?          @map("received_at")
+  receivedNote     String?            @map("received_note") @db.Text
+  proofPhotoPath   String?            @map("proof_photo_path") @db.VarChar(255)
   createdAt        DateTime           @default(now()) @map("created_at")
 
   campaign    SwadayaCampaign @relation(fields: [campaignId], references: [id])
   contributor Profile?        @relation("ContributorProfile", fields: [contributorId], references: [id])
   verifier    Profile?        @relation("VerifierProfile", fields: [verifiedBy], references: [id])
+  receiver    Profile?        @relation("ReceiverProfile", fields: [receivedBy], references: [id])
 
   @@map("swadaya_contributions")
 }
