@@ -86,19 +86,27 @@ Semua fitur berikut **WAJIB** dikerjakan (bukan opsional), didesain rule-based
   (tanpa login sama sekali), statistik agregat saja, SELALU mengecualikan
   data demo. Detail di "Progres Sejauh Ini".
 
-### Cabang 5 — Percepatan Penyelesaian via Swadaya Masyarakat (fitur baru
-total, insight dari wawancara narasumber)
-- 5a. Pemicu otomatis galang swadaya saat laporan berstatus `waiting_budget`
-  melewati ambang waktu tertentu, ATAU saat pengajuan anggaran ditolak
-  (lihat `rejectBudgetRequest` di `src/features/village/actions.ts` — titik
-  hook yang tepat)
-- 5b. Kontribusi multi-jenis: **uang, material, logistik, tenaga** (bukan
-  cuma uang) — catatan akademis: penelitian Kurniasih & Mulyono (2022) sudah
-  singgung donasi/galang dana secara umum, jadi kebaruan kita ditekankan di
-  multi-jenis kontribusinya, bukan konsep donasi itu sendiri
-- 5c. Progres transparan per laporan (publik lihat total terkumpul + sisa
-  kebutuhan)
-- 5d. Validasi & pencairan oleh Admin/Kepala Desa sebelum dipakai
+### Cabang 5 — Percepatan Penyelesaian via Swadaya Masyarakat — **SELESAI
+(2026-09-05) — SELURUH 5 CABANG TA SUDAH SELESAI**
+- [x] **5a. SELESAI** — Buka galang swadaya **MANUAL lewat tombol** (BUKAN
+  otomatis/cron seperti draf awal cabang ini — lihat KEPUTUSAN 4 di
+  "Progres Sejauh Ini" untuk alasannya), tersedia untuk laporan yang sudah
+  ditugaskan ke seksi dan belum `resolved`. Reuse status `waiting_budget`
+  yang sudah ada untuk menjeda SLA (BUKAN status/enum baru) — lihat
+  KEPUTUSAN 1.
+- [x] **5b. SELESAI** — Kontribusi multi-jenis: **uang, material, logistik,
+  tenaga**, WAJIB login (semua role, tidak dibatasi cuma warga) — lihat
+  KEPUTUSAN 2. Catatan akademis: penelitian Kurniasih & Mulyono (2022)
+  sudah singgung donasi/galang dana secara umum, jadi kebaruan kita
+  ditekankan di multi-jenis kontribusinya, bukan konsep donasi itu sendiri.
+- [x] **5c. SELESAI** — Progres transparan per laporan: total terkumpul
+  (uang, hanya yang terverifikasi) vs target, daftar kontribusi non-tunai,
+  terlihat oleh SEMUA role yang bisa buka detail laporan itu (termasuk
+  Kasi, read-only).
+- [x] **5d. SELESAI** — Verifikasi (`pending→verified`) dan konfirmasi
+  terima (`verified→received`, dengan foto bukti opsional) sebagai 2 tahap
+  TERPISAH, khusus Admin/Kepala Desa/Sekdes. Tutup campaign memicu resume
+  SLA.
 
 ## Tech Stack
 
@@ -1071,7 +1079,147 @@ Kepala Desa/Sekdes (termasuk `/dashboard/village/performance` dari Cabang
 3) tidak bisa dicoba langsung tanpa membuat akun uji sekali pakai setiap
 sesi. Sekarang bisa langsung dipakai untuk demo/sidang.
 
-- [ ] Cabang 5 — belum dikerjakan, menyusul di sesi berikutnya.
+**Cabang 5 — SELESAI (2026-09-05)**, Percepatan Penyelesaian via Swadaya
+Masyarakat. **INI CABANG TERAKHIR — SELURUH 5 CABANG RENCANA TA SUDAH
+SELESAI DIKERJAKAN.** Diawali investigasi read-only (alur `rejectBudgetRequest`,
+mekanisme jeda SLA yang ada, preseden `(public)/reports/create`, skema
+`SwadayaContribution` yang sudah didesain sejak migrasi awal, pola upload
+foto, navigasi dashboard warga) sebelum 6 keputusan berikut diambil:
+
+- **KEPUTUSAN 1 — REUSE status `waiting_budget` untuk jeda SLA swadaya,
+  BUKAN bikin status/enum baru.** Ini keputusan paling penting untuk
+  dijelaskan saat sidang. Alasan teknis: `calculateEffectiveSlaStatus()`
+  (`src/lib/sla.ts`) punya early-return eksplisit
+  `if (status === "waiting_budget") return "paused_budget"` — jeda SLA di
+  seluruh sistem ini SUDAH 100% terikat ke satu nilai status itu, bukan ke
+  tanggal. Reuse berarti: **nol migration skema baru, nol perubahan ke
+  `calculateEffectiveSlaStatus`, nol halaman tampilan baru** — badge/status
+  yang sudah ada otomatis "paham" laporan ini sedang dijeda. Satu-satunya
+  yang perlu ditambah adalah CARA MEMBEDAKAN sumber jeda (anggaran vs
+  swadaya) untuk keperluan TAMPILAN saja: dicek lewat keberadaan
+  `SwadayaCampaign` yang masih `open` untuk laporan itu
+  (`getOpenSwadayaCampaignReportIds()`), BUKAN dari nilai status itu
+  sendiri yang tetap sama. Trade-off yang disadari sejak awal: label
+  internal `SlaEventType`/`SlaStatus` ("paused_budget"/"resumed_budget")
+  tetap generik secara nama kolom — presisinya cuma ada di teks `note`
+  bebas yang ditulis eksplisit ("...karena galang swadaya masyarakat...",
+  BUKAN "...karena anggaran...") setiap kali aksi swadaya menyentuh audit
+  trail, dan di flag UI `hasActiveSwadayaCampaign` untuk badge. Alternatif
+  yang DITOLAK: bikin status baru (`waiting_swadaya`) — teknisnya tetap
+  mudah (migration enum sudah biasa dilakukan di proyek ini), tapi akan
+  butuh update ke banyak titik tampilan sekaligus (persis seperti
+  pengalaman nambah status "Kritis" di Cabang 1a yang menyentuh 3 file
+  berbeda) untuk manfaat yang tidak sepadan — presisi label ekstra yang
+  bisa dicapai lebih murah lewat flag UI saja.
+- **KEPUTUSAN 2 — Kontribusi WAJIB login, untuk SEMUA role (tidak
+  dibatasi cuma warga/"public"), BEDA SENGAJA dengan Cabang 4c yang
+  anonim sepenuhnya.** Alasan bedanya, penting untuk sidang: Cabang 4c
+  (`/statistik-sla`) itu MEMBACA data agregat publik — tidak ada risiko
+  penyalahgunaan karena tidak ada state yang berubah. Kontribusi swadaya
+  itu MENULIS data finansial/klaim tenaga kerja atas nama seseorang —
+  investigasi lebih dulu membuktikan **tidak ada satu pun jalur tulis-data
+  anonim di seluruh codebase ini** (termasuk `/reports/create` yang
+  disangka anonim ternyata TETAP redirect ke login di server action-nya,
+  cuma halamannya yang bisa dilihat tanpa akun) dan **tidak ada satu pun
+  mekanisme rate-limiting/anti-spam** di proyek ini — membuka tulis-data
+  anonim pertama kali justru untuk fitur donasi/klaim kontribusi adalah
+  risiko yang tidak sepadan. `contributorId`/`contributorName`/
+  `contributorPhone` SELALU diambil dari `getProfile()` di server,
+  form-nya cuma menampilkan readonly, TIDAK PERNAH dipercaya dari input
+  — supaya tidak ada celah mengatasnamakan orang lain sekalipun sudah
+  login.
+- **KEPUTUSAN 3 — kontribusi uang murni pencatatan manual, TIDAK ADA
+  integrasi payment gateway sungguhan.** Konsisten dengan skema
+  `SwadayaContribution` yang sejak awal desain migrasi cuma punya kolom
+  `amount` + `status` (pending/verified/received/rejected) tanpa kolom
+  transaksi/referensi pembayaran apapun — desain skema itu sendiri sudah
+  mengisyaratkan pencatatan manual sejak awal, bukan integrasi nyata.
+- **KEPUTUSAN 4 — buka campaign MANUAL lewat tombol, BUKAN otomatis/cron
+  seperti disebut di draf awal cabang ini ("melewati ambang waktu
+  tertentu").** Konsisten dengan Cabang 3c (predikat kinerja) yang juga
+  manual — proyek ini memang tidak punya infrastruktur cron sama sekali
+  (`SLA_ALERT_CRON_SECRET` tidak pernah diisi, tidak ada `vercel.json`).
+  Eligibilitas: laporan sudah ditugaskan ke seksi (`assignedSectionId`
+  terisi) DAN belum `resolved` — Admin/Kepala Desa/Sekdes selalu boleh,
+  Kasi cuma boleh untuk laporan seksinya sendiri (dicek server-side, bukan
+  cuma disembunyikan di UI).
+- **KEPUTUSAN 5 — target dana ambil dari `ReportBudgetRequest` TERAKHIR
+  untuk laporan itu (nilai `totalEstimatedBudget`-nya), TERLEPAS status
+  budget request itu sendiri (termasuk yang `rejected`), fallback ke
+  `targetNote` teks bebas kalau memang belum pernah ada pengajuan
+  anggaran sama sekali.** Ini masuk akal karena budget request yang
+  ditolak BUKAN berarti estimasinya salah — cuma berarti desa tidak bisa
+  membiayainya, sehingga estimasi itu tetap jadi acuan target yang wajar
+  untuk swadaya. **Diverifikasi nyata**: budget request Rp500.000 ditolak,
+  campaign dibuka tanpa mengisi target manual, target otomatis Rp500.000
+  tetap muncul di halaman.
+- **KEPUTUSAN 6 — "diverifikasi" dan "diterima" adalah 2 tahap TERPISAH**
+  (`pending→verified→received`), masing-masing dengan aktor dan waktu
+  sendiri (`verifiedBy`/`verifiedAt` vs `receivedBy`/`receivedAt`/
+  `receivedNote`/`proofPhotoPath` — 4 kolom baru, migration Tugas 1 sesi
+  ini). Alasan: verifikasi cuma mengonfirmasi janji/klaim kontribusi itu
+  masuk akal, BUKAN berarti barang/dana sudah benar-benar di tangan desa
+  — memisahkannya mencegah situasi "tercatat diterima" padahal baru
+  dijanjikan. `receiveSwadayaContribution` menolak dieksekusi kalau
+  kontribusi belum `verified`, jadi tahapnya betul-betul dipaksa berurutan.
+
+**Implementasi**: modul baru `src/features/reports/swadaya{Queries,Actions}.ts`
+(diletakkan di `reports/`, bukan `village/`, karena dipakai lintas 4 peran:
+Admin, Kepala Desa/Sekdes, Kasi, dan warga). Komponen:
+`SwadayaOpenCampaignButton.tsx` (tombol buka, muncul di 3 halaman detail
+laporan sekaligus — Admin/Village/Kasi), `SwadayaSection.tsx` (progres +
+daftar kontribusi, terlihat SEMUA role, tapi tombol aksi verifikasi/terima/
+tutup cuma render kalau `canManage=true`), `SwadayaContributionForm.tsx`
+(form kontribusi, field berubah sesuai jenis dipilih), `SwadayaContributionActions.tsx`
++ `SwadayaCloseCampaignButton.tsx` (aksi Admin/Kepala Desa/Sekdes). Halaman
+baru `/dashboard/public/swadaya` ("Bantu Warga Lain" — daftar semua
+campaign `open` lintas laporan) dan `/dashboard/public/swadaya/[campaignId]`
+(detail + form kontribusi), ditautkan dari navigasi warga. Foto bukti
+serah-terima disimpan dengan pola identik 4 lokasi upload yang sudah ada:
+`public/uploads/swadaya/<campaign_id>/<contribution_id>/<uuid>.<ext>`.
+**Refactor pendukung** (logika TIDAK diubah, cuma dipindah supaya bisa
+dipakai ulang tanpa duplikasi): `extendDueDateByPauseWindow` dipindah dari
+`village/actions.ts` (privat) ke `src/lib/sla.ts` (exported); `hasReportProgressUpdates`
+dipindah ke `src/features/reports/helpers.ts` — keduanya dipakai lagi oleh
+`closeSwadayaCampaign` untuk resume SLA dengan basis timestamp
+`SwadayaCampaign.openedAt/closedAt`, pola identik dengan resume SLA
+anggaran biasa.
+
+**Bug ditemukan & diperbaiki saat verifikasi Tugas 5** (bukan bagian asli
+Cabang 5, ditemukan sambil kerja): kartu statistik agregat "Jeda Anggaran"
+di halaman Monitoring SLA (`village/sla/page.tsx`) — beda dari badge
+PER-BARIS yang sudah benar membedakan sumber jeda — ternyata masih
+menjumlahkan SEMUA laporan `waiting_budget` sebagai "anggaran" tanpa
+peduli sumbernya, celah yang terlewat saat mengerjakan Tugas 2 karena
+fokusnya waktu itu cuma ke badge per-baris. Diperbaiki dengan memecah jadi
+2 kartu terpisah ("Jeda Anggaran" dan "Jeda Swadaya") memakai data yang
+sama yang sudah di-fetch di halaman itu.
+
+**Diverifikasi dengan data nyata lewat browser (Playwright), alur penuh
+ujung-ke-ujung**: laporan uji diklasifikasi ke Seksi Pembangunan → login
+Kasi, ajukan anggaran Rp500.000 lewat form asli → login Kepala Desa
+(akun permanen), tolak anggaran → dikonfirmasi laporan pindah
+`handled_by_village` dan `resolutionDueAt` di-extend → buka Galang
+Swadaya TANPA mengisi target manual → dikonfirmasi laporan balik
+`waiting_budget`, target otomatis Rp500.000 muncul (dari budget request
+yang BARU SAJA ditolak), badge watchlist menampilkan "Jeda Swadaya" bukan
+"Jeda Anggaran" → login warga LAIN, kirim kontribusi uang (Rp200.000) DAN
+tenaga lewat "Bantu Warga Lain" → dikonfirmasi `contributorId`/`Name`
+otomatis dari sesi, tidak bisa diisi bebas → login Kepala Desa lagi,
+verifikasi kedua kontribusi → konfirmasi terima salah satu dengan foto
+bukti sungguhan (dikonfirmasi file benar-benar tersimpan di disk) → tutup
+campaign → dikonfirmasi campaign `closed`, laporan lanjut
+`handled_by_village`, `resolutionDueAt` di-extend LAGI (basis waktu
+campaign kali ini), badge watchlist kembali normal. Total 30 assertion,
+semua lolos di percobaan final (2 iterasi sebelumnya gagal karena bug di
+SKRIP PLAYWRIGHT SAYA SENDIRI — salah asumsi lokasi tombol reject anggaran
+ada di halaman detail per-request bukan inline tabel, dan locator berbasis
+teks yang salah tangkap elemen lain karena pencocokan case-insensitive
+Playwright kebetulan tertimpa isi catatan status log — bukan bug
+aplikasi). Data uji dibersihkan total (2 akun, 1 laporan, 1 campaign, 2
+kontribusi, 1 budget request, folder foto bukti) — database kembali ke
+baseline persis: 13 profil, 84 laporan (83 demo + 1 asli), 0
+campaign/kontribusi/budget request tersisa.
 
 ## Aturan Kerja untuk Claude Code
 
