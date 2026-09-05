@@ -104,6 +104,7 @@ export function KasiReportActionPanel({
           <form action={startAction} className="space-y-3">
             <input type="hidden" name="report_id" value={reportId} />
             <Textarea
+              id="start-note"
               name="note"
               label="Catatan mulai"
               placeholder="Jelaskan singkat langkah awal penanganan."
@@ -135,6 +136,7 @@ export function KasiReportActionPanel({
           <form action={progressAction} className="space-y-3">
             <input type="hidden" name="report_id" value={reportId} />
             <Textarea
+              id="progress-note"
               name="note"
               label="Update progres"
               placeholder="Tulis progres penanganan lapangan terbaru."
@@ -170,6 +172,7 @@ export function KasiReportActionPanel({
           <form action={returnAction} className="space-y-3 border-t border-border pt-5">
             <input type="hidden" name="report_id" value={reportId} />
             <Textarea
+              id="return-note"
               name="note"
               label="Catatan pengembalian tugas"
               placeholder="Jelaskan mengapa laporan ini tidak sesuai dengan seksi Anda."
@@ -192,6 +195,7 @@ export function KasiReportActionPanel({
           <form action={resolveAction} className="space-y-3">
             <input type="hidden" name="report_id" value={reportId} />
             <Textarea
+              id="resolve-note"
               name="note"
               label="Catatan penyelesaian"
               placeholder="Ringkas hasil penanganan yang sudah selesai."
