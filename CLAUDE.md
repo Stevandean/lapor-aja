@@ -3,6 +3,110 @@
 Dokumen ini adalah konteks persisten untuk Claude Code. Baca seluruh isinya
 sebelum mengerjakan tugas apapun di project ini.
 
+## Ringkasan Kesiapan Sidang
+
+*(Referensi cepat — detail penuh tiap keputusan ada di bagian "Progres
+Sejauh Ini" di bawah. Update terakhir: 2026-09-05, seluruh 5 cabang fitur
+SELESAI + regression test lintas-cabang lolos.)*
+
+### 5 Cabang Fitur — inti tiap cabang dalam 1-2 kalimat
+
+1. **Deteksi & Klasifikasi Waktu** — status SLA otomatis 4 level (Aman/
+   Peringatan/Kritis/Terlambat berdasar % waktu terpakai), ambang batas SLA
+   bisa di-override per kategori laporan, dan tenggat dihitung sadar hari
+   kerja (lompat Sabtu/Minggu/libur nasional).
+2. **Notifikasi & Eskalasi** — alert SLA terkirim bertingkat sesuai
+   keparahan (Kasi → +Admin → +Kepala Desa/Sekdes, kumulatif), ditampilkan
+   lewat 3 halaman kerja harian yang sudah ada (bukan halaman watchlist
+   baru).
+3. **Evaluasi Kinerja** — dashboard tren tepat-waktu vs terlambat per
+   seksi/kategori (live query), plus predikat "kinerja terbaik" per
+   periode yang di-generate manual dan disimpan sebagai snapshot beku.
+4. **Transparansi & Akuntabilitas** — audit trail lengkap (termasuk alert &
+   predikat), ekspor evaluasi kinerja PDF/Excel dengan toggle data demo,
+   dan halaman statistik SLA publik yang genuinely anonim (tanpa login).
+5. **Percepatan via Swadaya Masyarakat** — warga bisa galang & menyumbang
+   (uang/material/logistik/tenaga) untuk laporan yang kekurangan anggaran
+   desa, dengan jeda-lanjut SLA otomatis dan verifikasi 2 tahap sebelum
+   dana/barang dianggap "diterima".
+
+### Kredensial Akun
+
+| Akun | Email | Password | Role | Keterangan |
+|---|---|---|---|---|
+| Asli #1 | `admin@gmail.com` | *(milik pengguna)* | admin | Akun asli pertama proyek |
+| Asli #2 | `stevan@gmail.com` | *(milik pengguna)* | public | Akun asli, 1 laporan nyata (status pending) |
+| Permanen | `kepaladesa@gmail.com` | `KepalaDesa2026!` | kepala_desa | Dibuat sesi Cabang 4, untuk demo/sidang |
+| Permanen | `sekdes@gmail.com` | `Sekdes2026!` | sekdes | Dibuat sesi Cabang 4, untuk demo/sidang |
+| Demo | `demo.kasi.1@lapor-aja.test` | `Demo12345!` | kasi | Seksi Pembangunan |
+| Demo | `demo.kasi.2@lapor-aja.test` | `Demo12345!` | kasi | Seksi Pelayanan Umum |
+| Demo | `demo.kasi.3@lapor-aja.test` | `Demo12345!` | kasi | Seksi Kesejahteraan Rakyat |
+| Demo | `demo.warga.1` s/d `.6@lapor-aja.test` | `Demo12345!` | public | 6 akun pelapor demo |
+
+Saran: ganti password `kepaladesa@gmail.com`/`sekdes@gmail.com` lewat
+halaman Pengaturan setelah dipakai pertama kali kalau akun ini akan
+dipertahankan pasca-sidang.
+
+### Pertanyaan yang Mungkin Ditanya Penguji
+
+1. **"Kenapa evaluasi kinerja per-SEKSI, bukan per-Kasi individu?"**
+   Karena `ReportSectionAssignment.assignedTo` (kolom yang seharusnya
+   mencatat Kasi individu) tidak pernah diisi kode manapun di seluruh
+   sistem — satu-satunya penanda "siapa menangani" yang benar-benar
+   konsisten terisi adalah level seksi (`Report.assignedSectionId`).
+   Memaksakan atribusi ke individu berarti membangun fitur di atas data
+   yang secara desain tidak pernah benar-benar merekamnya.
+2. **"Kenapa threshold status SLA 60/85/100%, bukan angka simetris seperti
+   75/90/100?"** Supaya "Peringatan" muncul lebih awal (60%, bukan mepet
+   akhir) — memberi staf desa jendela waktu bertindak SEBELUM masuk fase
+   "Kritis", bukan cuma diberi tahu setelah nyaris terlambat.
+3. **"Kenapa kontribusi swadaya wajib login, tapi statistik SLA publik
+   boleh anonim?"** Statistik publik cuma MEMBACA data agregat — nol
+   risiko. Kontribusi swadaya MENULIS klaim finansial/tenaga atas nama
+   seseorang — investigasi membuktikan tidak ada satupun jalur tulis-data
+   anonim maupun mekanisme anti-spam di seluruh proyek ini, jadi membuka
+   jalur itu pertama kali untuk fitur donasi bukan risiko yang sepadan.
+4. **"Kenapa jeda SLA karena galang swadaya REUSE status `waiting_budget`
+   yang sama dengan jeda anggaran, bukan status baru?"**
+   `calculateEffectiveSlaStatus()` sudah 100% terikat ke satu nilai status
+   itu untuk menentukan "jeda" — reuse berarti nol migration skema baru
+   dan nol perubahan ke seluruh titik tampilan yang sudah ada. Pembeda
+   sumber jeda (anggaran vs swadaya) cukup lewat flag UI (cek ada
+   `SwadayaCampaign` yang masih `open` atau tidak), bukan lewat nilai
+   status itu sendiri.
+5. **"Kenapa PDF (surat resmi & ekspor evaluasi kinerja) pakai Playwright,
+   bukan library PDF khusus seperti `@react-pdf/renderer`?"** Chromium
+   milik Playwright sudah ter-download di proyek ini untuk keperluan E2E
+   testing — install library PDF berbasis browser lain (mis. `puppeteer`)
+   akan mengunduh Chromium KEDUA yang fungsinya identik, murni
+   pemborosan. Risiko yang belum terkonfirmasi: cara deploy production
+   proyek ini belum diketahui (tidak ada `Dockerfile`/`vercel.json`), jadi
+   belum dipastikan langkah install production akan tetap mengunduh
+   browser Playwright.
+
+### Keterbatasan yang Diketahui
+
+- **Data hari libur nasional 2027 masih PERKIRAAN** — SKB 3 Menteri resmi
+  untuk 2027 belum terbit saat data disusun. Cek ulang tanggalnya sebelum
+  sidang kalau perhitungan SLA lintas tahun jadi topik.
+- **Tidak ada tombol "Tolak" untuk kontribusi swadaya** — `ContributionStatus.rejected`
+  ada di enum skema (didesain sejak awal) tapi tidak ada UI untuk
+  mengaksesnya, sengaja di luar cakupan yang diminta.
+- **Kontribusi uang murni pencatatan manual** — tidak ada integrasi
+  payment gateway sungguhan, sesuai keputusan desain eksplisit.
+- **Ada 83 laporan berlabel "Demo -" tersimpan permanen di database** untuk
+  keperluan demo dashboard evaluasi kinerja (Cabang 3) — jangan bingung
+  kalau muncul banyak laporan dengan nama pelapor "Demo - Warga N" saat
+  demo. SELALU dikecualikan dari halaman publik & bisa di-toggle di
+  ekspor internal.
+- **`proxy.ts` di root repo (kode mati peninggalan era Supabase, meng-import
+  `@supabase/ssr`) belum dihapus** — investigasi kuat menunjukkan ini tidak
+  pernah benar-benar berjalan (nama file bukan `middleware.ts`, Next.js
+  tidak akan pernah memanggilnya), tapi keputusan hapus-atau-tidak masih
+  menunggu konfirmasi eksplisit dari sesi sebelumnya.
+- **Tidak ada rate-limiting/anti-spam di seluruh sistem** — termasuk jalur
+  publik seperti pengiriman laporan.
+
 ## Tentang Proyek
 
 **Lapor Aja** adalah website pengaduan dan penanganan pengaduan publik desa,
