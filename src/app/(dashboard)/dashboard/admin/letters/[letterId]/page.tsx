@@ -1,6 +1,6 @@
 import Link from "next/link";
 import { notFound } from "next/navigation";
-import { ArrowLeft } from "lucide-react";
+import { ArrowLeft, FileDown } from "lucide-react";
 import { Button } from "@/src/components/ui/Button";
 import { PrintLetterButton } from "@/src/features/admin/components/PrintLetterButton";
 import { OfficialLetterPrimaryActionButton } from "@/src/features/admin/components/OfficialLetterPrimaryActionButton";
@@ -51,6 +51,15 @@ export default async function AdminLetterDetailPage({
             letterId={letter.id}
             status={letter.status}
           />
+
+          {letter.pdf_url ? (
+            <a href={letter.pdf_url} download>
+              <Button variant="outline">
+                <FileDown className="mr-2 h-4 w-4" />
+                Unduh PDF
+              </Button>
+            </a>
+          ) : null}
 
           <PrintLetterButton />
 

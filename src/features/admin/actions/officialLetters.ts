@@ -4,6 +4,7 @@ import { revalidatePath } from "next/cache";
 import { prisma } from "@/src/lib/prisma";
 import type { ActionState } from "@/src/types/action";
 import { sendOfficialLetterViaBrevo } from "@/src/lib/email/sendEmail";
+import { generateOfficialLetterPdf } from "@/src/features/admin/officialLetterPdf";
 import { requireAdmin } from "./shared";
 
 export async function createOfficialLetter(
@@ -113,8 +114,10 @@ export async function createOfficialLetter(
     .filter(Boolean)
     .join("\n");
 
+  let letter;
+
   try {
-    await prisma.officialLetter.create({
+    letter = await prisma.officialLetter.create({
       data: {
         reportId: report.id,
         letterType: "surat_permohonan_perbaikan",
@@ -125,12 +128,33 @@ export async function createOfficialLetter(
         generatedBy: profile.id,
         status: "draft",
       },
+      select: { id: true },
     });
   } catch (error) {
     return {
       status: "error",
       message: error instanceof Error ? error.message : "Gagal membuat surat resmi.",
     };
+  }
+
+  // PDF di-generate sekali di sini (isi surat tidak pernah berubah lagi
+  // setelah dibuat — tidak ada aksi "edit" body/subject) — finalizeOfficialLetter
+  // cuma jadi jaring pengaman kalau untuk suatu alasan baris ini belum
+  // punya PDF saat difinalkan.
+  try {
+    const pdfPath = await generateOfficialLetterPdf({
+      letterId: letter.id,
+      letterNumber,
+      subject,
+      body,
+    });
+
+    await prisma.officialLetter.update({
+      where: { id: letter.id },
+      data: { pdfUrl: pdfPath, filePath: pdfPath },
+    });
+  } catch (error) {
+    console.error("Failed to generate official letter PDF:", error);
   }
 
   revalidatePath("/dashboard/admin/letters");
@@ -185,7 +209,14 @@ export async function finalizeOfficialLetter(
 
   const letter = await prisma.officialLetter.findUnique({
     where: { id: letterId },
-    select: { id: true, status: true },
+    select: {
+      id: true,
+      status: true,
+      letterNumber: true,
+      subject: true,
+      body: true,
+      pdfUrl: true,
+    },
   });
 
   if (!letter) {
@@ -219,6 +250,27 @@ export async function finalizeOfficialLetter(
       status: "error",
       message: error instanceof Error ? error.message : "Gagal menandai surat resmi final.",
     };
+  }
+
+  // Jaring pengaman: harusnya PDF sudah ada sejak createOfficialLetter,
+  // tapi kalau untuk suatu alasan belum (mis. generate sempat gagal),
+  // coba lagi di sini supaya surat final tetap punya PDF yang bisa diunduh.
+  if (!letter.pdfUrl) {
+    try {
+      const pdfPath = await generateOfficialLetterPdf({
+        letterId: letter.id,
+        letterNumber: letter.letterNumber,
+        subject: letter.subject,
+        body: letter.body ?? "",
+      });
+
+      await prisma.officialLetter.update({
+        where: { id: letterId },
+        data: { pdfUrl: pdfPath, filePath: pdfPath },
+      });
+    } catch (error) {
+      console.error("Failed to generate official letter PDF on finalize:", error);
+    }
   }
 
   revalidatePath("/dashboard/admin/letters");

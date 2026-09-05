@@ -1,8 +1,8 @@
 import { NextResponse } from "next/server";
-import { chromium } from "playwright";
 import { getProfile } from "@/src/lib/auth/getProfile";
 import { getPerformanceExportData } from "@/src/features/village/queries";
 import { buildPerformancePdfHtml } from "@/src/features/village/performanceExport";
+import { renderHtmlToPdf } from "@/src/lib/pdf";
 import type { PerformancePeriodType } from "@/src/lib/performancePeriod";
 
 export async function GET(request: Request) {
@@ -43,25 +43,13 @@ export async function GET(request: Request) {
     }).format(new Date()),
   });
 
-  const browser = await chromium.launch();
+  const pdfBuffer = await renderHtmlToPdf(html);
 
-  try {
-    const page = await browser.newPage();
-    await page.setContent(html, { waitUntil: "networkidle" });
-    const pdfBuffer = await page.pdf({
-      format: "A4",
-      printBackground: true,
-      margin: { top: "16mm", bottom: "16mm", left: "14mm", right: "14mm" },
-    });
-
-    return new NextResponse(new Uint8Array(pdfBuffer), {
-      status: 200,
-      headers: {
-        "Content-Type": "application/pdf",
-        "Content-Disposition": `attachment; filename="evaluasi-kinerja-${data.period.label.replaceAll(" ", "-")}.pdf"`,
-      },
-    });
-  } finally {
-    await browser.close();
-  }
+  return new NextResponse(new Uint8Array(pdfBuffer), {
+    status: 200,
+    headers: {
+      "Content-Type": "application/pdf",
+      "Content-Disposition": `attachment; filename="evaluasi-kinerja-${data.period.label.replaceAll(" ", "-")}.pdf"`,
+    },
+  });
 }
