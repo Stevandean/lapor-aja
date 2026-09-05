@@ -367,6 +367,7 @@ model Profile {
   swadayaCampaignsOpened SwadayaCampaign[]
   contributionsMade      SwadayaContribution[]        @relation("ContributorProfile")
   contributionsVerified  SwadayaContribution[]        @relation("VerifierProfile")
+  performanceSnapshotsGenerated PerformanceSnapshot[] @relation("PerformanceSnapshotGeneratedBy")
 
   @@map("profiles")
 }
@@ -409,6 +410,11 @@ model Report {
   mergedAt             DateTime?      @map("merged_at")
   mergedBy             String?        @map("merged_by") @db.Char(36)
   mergeReason          String?        @map("merge_reason") @db.Text
+  // BARU — Cabang 4c: penanda data seed demo Cabang 3 (83 laporan dari
+  // prisma/seedPerformanceDemoData.mjs, reporter berawalan "Demo -").
+  // WAJIB di-exclude di halaman statistik publik 4c; opsional ditampilkan
+  // di ekspor evaluasi kinerja internal 4b lewat toggle eksplisit.
+  isDemoData           Boolean        @default(false) @map("is_demo_data")
   createdAt            DateTime       @default(now()) @map("created_at")
   updatedAt            DateTime       @updatedAt @map("updated_at")
 
@@ -807,11 +813,17 @@ model PerformanceSnapshot {
   onTimePercentage   Decimal               @map("on_time_percentage") @db.Decimal(5, 2)
   avgResolutionHours Decimal               @map("avg_resolution_hours") @db.Decimal(10, 2)
   badgeLabel         String?               @map("badge_label") @db.VarChar(150)
+  // BARU — Cabang 4a: siapa yang klik tombol "Tentukan Predikat Periode
+  // Ini". Nullable karena baris predikat Juni 2026 dari verifikasi Cabang
+  // 3 dibuat oleh akun uji sementara yang sudah dihapus — tidak ada cara
+  // aman mengisi ulang riwayat itu, dibiarkan null apa adanya.
+  generatedBy        String?               @map("generated_by") @db.Char(36)
   createdAt          DateTime              @default(now()) @map("created_at")
 
-  section  VillageSection? @relation(fields: [sectionId], references: [id])
-  dusun    Dusun?          @relation(fields: [dusunId], references: [id])
-  category Category?       @relation(fields: [categoryId], references: [id])
+  section         VillageSection? @relation(fields: [sectionId], references: [id])
+  dusun           Dusun?          @relation(fields: [dusunId], references: [id])
+  category        Category?       @relation(fields: [categoryId], references: [id])
+  generatedByUser Profile?        @relation("PerformanceSnapshotGeneratedBy", fields: [generatedBy], references: [id])
 
   // Satu predikat per kombinasi periode+scope — generate ulang untuk
   // periode yang SAMA menimpa (upsert) baris ini, bukan menumpuk baris
