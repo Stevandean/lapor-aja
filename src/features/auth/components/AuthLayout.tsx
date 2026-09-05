@@ -13,6 +13,13 @@ type AuthLayoutProps = {
   footerText: string;
   footerLinkText: string;
   footerHref: string;
+  // Cabang 4c: slot opsional untuk link tambahan di bawah footer utama
+  // (mis. link ke statistik SLA publik) — dibuat opsional supaya halaman
+  // lain yang pakai layout ini (Register) tidak wajib mengisinya.
+  secondaryLink?: {
+    text: string;
+    href: string;
+  };
 };
 
 export function AuthLayout({
@@ -22,6 +29,7 @@ export function AuthLayout({
   footerText,
   footerLinkText,
   footerHref,
+  secondaryLink,
 }: AuthLayoutProps) {
   return (
     <main className="min-h-screen bg-background">
@@ -132,6 +140,17 @@ export function AuthLayout({
                 {footerLinkText}
               </Link>
             </p>
+
+            {secondaryLink ? (
+              <p className="mt-3 text-center text-sm">
+                <Link
+                  href={secondaryLink.href}
+                  className="font-medium text-muted-foreground hover:text-foreground"
+                >
+                  {secondaryLink.text}
+                </Link>
+              </p>
+            ) : null}
           </div>
         </section>
       </div>

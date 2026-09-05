@@ -1,3 +1,4 @@
+import Link from "next/link";
 import { redirect } from "next/navigation";
 import { ReportForm } from "@/src/features/reports/components/ReportForm";
 import { getProfile } from "@/src/lib/auth/getProfile";
@@ -46,6 +47,16 @@ export default async function CreateReportPage() {
             <ReportForm />
           </CardContent>
         </Card>
+
+        <p className="mt-6 text-center text-sm text-muted-foreground">
+          Ingin lihat kepatuhan SLA desa dulu?{" "}
+          <Link
+            href="/statistik-sla"
+            className="font-semibold text-primary hover:text-primary-700"
+          >
+            Buka statistik publik
+          </Link>
+        </p>
       </div>
     </main>
   );

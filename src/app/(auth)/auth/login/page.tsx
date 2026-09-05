@@ -10,6 +10,10 @@ export default function LoginPage() {
       footerText="Belum punya akun?"
       footerLinkText="Buat akun"
       footerHref="/auth/register"
+      secondaryLink={{
+        text: "Lihat statistik kepatuhan SLA desa (tanpa perlu login)",
+        href: "/statistik-sla",
+      }}
     >
       <Suspense>
         <LoginForm />
