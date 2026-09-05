@@ -254,3 +254,103 @@ export async function getPerformancePredicateHistory(): Promise<
     generatedByName: snapshot.generatedByUser?.fullName ?? null,
   }));
 }
+
+export type PerformanceExportRow = {
+  reportNumber: string;
+  title: string;
+  categoryName: string | null;
+  dusunName: string | null;
+  sectionName: string | null;
+  priority: string;
+  createdAt: string;
+  resolvedAt: string;
+  resolutionDueAt: string | null;
+  isOnTime: boolean;
+  isDemoData: boolean;
+};
+
+// Cabang 4b: dipakai KHUSUS oleh ekspor PDF/Excel, TIDAK oleh dashboard
+// 3a/3b yang tetap seperti semula (selalu ikutkan semua laporan resolved,
+// demo maupun asli — itu keputusan Cabang 3 yang tidak diubah di sini).
+// `includeDemo=false` (default toggle ekspor) mengecualikan laporan
+// `isDemoData=true` dari SELURUH angka (ringkasan, breakdown, DAN baris
+// detail), bukan cuma disembunyikan dari tabel detail.
+export async function getPerformanceExportData({
+  periodType,
+  periodOffset,
+  includeDemo,
+}: {
+  periodType: PerformancePeriodType;
+  periodOffset: number;
+  includeDemo: boolean;
+}) {
+  const profile = await requireVillageLeaderProfile();
+
+  if (!profile) {
+    return null;
+  }
+
+  const period = getPeriodRange(periodType, periodOffset);
+
+  const reports = await prisma.report.findMany({
+    where: {
+      status: "resolved",
+      resolvedAt: { gte: period.start, lte: period.end },
+      ...(includeDemo ? {} : { isDemoData: false }),
+    },
+    select: {
+      reportNumber: true,
+      title: true,
+      priority: true,
+      createdAt: true,
+      resolvedAt: true,
+      resolutionDueAt: true,
+      isDemoData: true,
+      categoryId: true,
+      category: { select: { id: true, name: true } },
+      dusun: { select: { name: true } },
+      assignedSectionId: true,
+      assignedSection: { select: { id: true, name: true } },
+    },
+    orderBy: { resolvedAt: "asc" },
+  });
+
+  const resolvedRows: ResolvedReportRow[] = reports.map((report) => ({
+    createdAt: report.createdAt,
+    resolvedAt: report.resolvedAt as Date,
+    resolutionDueAt: report.resolutionDueAt,
+    assignedSectionId: report.assignedSectionId,
+    assignedSection: report.assignedSection,
+    categoryId: report.categoryId,
+    category: report.category,
+  }));
+
+  const detailRows: PerformanceExportRow[] = reports.map((report) => ({
+    reportNumber: report.reportNumber,
+    title: report.title,
+    categoryName: report.category?.name ?? null,
+    dusunName: report.dusun?.name ?? null,
+    sectionName: report.assignedSection?.name ?? null,
+    priority: report.priority,
+    createdAt: report.createdAt.toISOString(),
+    resolvedAt: (report.resolvedAt as Date).toISOString(),
+    resolutionDueAt: report.resolutionDueAt?.toISOString() ?? null,
+    isOnTime:
+      !report.resolutionDueAt ||
+      (report.resolvedAt as Date).getTime() <= report.resolutionDueAt.getTime(),
+    isDemoData: report.isDemoData,
+  }));
+
+  return {
+    period: {
+      label: period.label,
+      start: period.start.toISOString(),
+      end: period.end.toISOString(),
+    },
+    includeDemo,
+    summary: summarizeReports(resolvedRows),
+    bySection: groupBySection(resolvedRows),
+    byCategory: groupByCategory(resolvedRows),
+    rows: detailRows,
+  };
+}

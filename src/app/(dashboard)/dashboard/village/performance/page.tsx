@@ -15,6 +15,7 @@ import {
 } from "@/src/features/village/components/VillagePerformanceCharts";
 import { VillagePerformancePredicateButton } from "@/src/features/village/components/VillagePerformancePredicateButton";
 import { VillagePerformancePredicateHistory } from "@/src/features/village/components/VillagePerformancePredicateHistory";
+import { VillagePerformanceExportPanel } from "@/src/features/village/components/VillagePerformanceExportPanel";
 import {
   getPerformancePredicateHistory,
   getVillagePerformanceData,
@@ -89,6 +90,20 @@ export default async function VillagePerformancePage({
       </section>
 
       <VillagePerformanceFilterBar periodOptions={periodOptions} />
+
+      <Card>
+        <CardHeader>
+          <CardTitle>Ekspor Laporan Evaluasi Kinerja</CardTitle>
+          <CardDescription>
+            Unduh ringkasan periode terpilih sebagai PDF, atau data detail
+            per laporan sebagai Excel.
+          </CardDescription>
+        </CardHeader>
+
+        <CardContent>
+          <VillagePerformanceExportPanel />
+        </CardContent>
+      </Card>
 
       <section className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
         <VillageStatCard

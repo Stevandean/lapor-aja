@@ -25,5 +25,7 @@ export {
 export {
   getVillagePerformanceData,
   getPerformancePredicateHistory,
+  getPerformanceExportData,
   type PerformancePredicateRecord,
+  type PerformanceExportRow,
 } from "./performance";
