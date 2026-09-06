@@ -99,11 +99,6 @@ dipertahankan pasca-sidang.
   kalau muncul banyak laporan dengan nama pelapor "Demo - Warga N" saat
   demo. SELALU dikecualikan dari halaman publik & bisa di-toggle di
   ekspor internal.
-- **`proxy.ts` di root repo (kode mati peninggalan era Supabase, meng-import
-  `@supabase/ssr`) belum dihapus** — investigasi kuat menunjukkan ini tidak
-  pernah benar-benar berjalan (nama file bukan `middleware.ts`, Next.js
-  tidak akan pernah memanggilnya), tapi keputusan hapus-atau-tidak masih
-  menunggu konfirmasi eksplisit dari sesi sebelumnya.
 - **Tidak ada rate-limiting/anti-spam di seluruh sistem** — termasuk jalur
   publik seperti pengiriman laporan.
 
@@ -468,6 +463,12 @@ teridentifikasi di awal sudah dipecah, tidak ada lagi file `.ts` di
       file auth yang barusan di-swap) — dibiarkan ada dulu (instruksi sesi
       ini: jangan sentuh file supabase lain), tapi ini kandidat dihapus di
       pass cleanup nanti.
+      **[UPDATE 2026-09-06]: pass cleanup ini sudah terjadi** — 4 file
+      wrapper di `src/lib/supabase/`, `proxy.ts` di root (kode mati
+      peninggalan sebelum migrasi, tidak pernah benar-benar dipanggil
+      Next.js), dan seluruh dependency `@supabase/*` di `package.json`
+      sudah dihapus total. `npx tsc --noEmit` dan `npm run build` bersih.
+      Supabase sudah 100% tidak tersisa di proyek ini.
     - Trigger Postgres yang dulu auto-membuat baris `profiles` saat
       Supabase `signUp()` tidak pernah ditemukan di
       `supabase/migrations/` lokal (kemungkinan besar dibuat manual lewat
