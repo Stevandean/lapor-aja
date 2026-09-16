@@ -101,6 +101,19 @@ dipertahankan pasca-sidang.
   ekspor internal.
 - **Tidak ada rate-limiting/anti-spam di seluruh sistem** — termasuk jalur
   publik seperti pengiriman laporan.
+- **Penamaan `/dashboard/public` MEMBINGUNGKAN, baca dua kali sebelum
+  berasumsi.** "public" di path itu artinya **role user "public"** (warga
+  pelapor biasa) — itu adalah dashboard PRIBADI milik warga yang sudah
+  login, sama tergerbang-nya oleh auth seperti `/dashboard/admin` atau
+  `/dashboard/village`. **BUKAN** halaman yang bisa diakses tanpa login.
+  Halaman yang benar-benar publik/anonim ada di grup route `(public)`:
+  `/reports/create`, `/statistik-sla`, `/guide`. Insiden nyata yang
+  ditimbulkan kebingungan ini: root `src/app/page.tsx` sempat
+  `redirect("/dashboard/public")` tanpa syarat — kelihatan masuk akal
+  ("public" = publik) tapi hasilnya SEMUA pengunjung anonim (termasuk yang
+  belum pernah punya akun) malah kena lempar ke `/auth/login`, karena
+  `/dashboard/public` tetap digerbangi `(dashboard)/layout.tsx`. Diperbaiki
+  2026-09-16 — lihat "Progres Sejauh Ini" untuk detail.
 
 ## Tentang Proyek
 
@@ -1325,6 +1338,68 @@ aplikasi). Data uji dibersihkan total (2 akun, 1 laporan, 1 campaign, 2
 kontribusi, 1 budget request, folder foto bukti) — database kembali ke
 baseline persis: 13 profil, 84 laporan (83 demo + 1 asli), 0
 campaign/kontribusi/budget request tersisa.
+
+**BUG FIX KECIL — root `/` redirect ke login untuk pengunjung anonim
+(2026-09-16)**, dilaporkan pengguna setelah seluruh 5 Cabang selesai.
+Investigasi (dicek dulu sebelum kode diubah, per instruksi eksplisit
+pengguna) menemukan akar masalahnya: `src/app/page.tsx` sebelumnya
+`redirect("/dashboard/public")` tanpa syarat — kelihatan masuk akal kalau
+dibaca sekilas ("public" = publik), tapi `/dashboard/public` sebenarnya
+dashboard ROLE "public" (warga login), tetap digerbangi auth oleh
+`(dashboard)/layout.tsx`, jadi SEMUA pengunjung anonim (bukan cuma yang
+belum pernah punya akun) ikut kelempar ke `/auth/login`. Root layout
+(`src/app/layout.tsx`) dan middleware dicek juga, keduanya bukan
+penyebab — murni satu baris `redirect()` di `page.tsx` itu sendiri. Lihat
+poin baru di "Keterbatasan yang Diketahui" untuk penjelasan penamaan yang
+memicu kesalahan ini.
+
+**Perbaikan — root jadi kombinasi landing page + redirect kondisional**,
+BUKAN landing page statis murni ataupun redirect buta seperti semula:
+```
+ada sesi login?  → redirect(getDashboardRouteByRole(profile.role))
+tidak ada sesi?  → render landing page (bukan redirect)
+```
+**Rasionalisasi kombinasi ini**: redirect buta (versi lama) gagal total
+untuk pengunjung anonim — itulah bug-nya. Tapi landing page statis MURNI
+(tanpa cek sesi sama sekali) juga bukan solusi tepat — staf/warga yang
+SUDAH login akan dipaksa lihat halaman "Mulai dari sini" dan klik masuk
+lagi setiap kali buka root, padahal mereka seharusnya langsung diantar ke
+dashboard kerja mereka (persis seperti perilaku yang sudah benar di
+`(public)/reports/create`, yang juga cek profil dan redirect kalau
+rolenya bukan "public"). Kombinasi keduanya melayani DUA populasi
+pengunjung root yang berbeda dengan benar: pengunjung anonim (warga baru,
+mesin pencari, siapa pun yang belum kenal sistem) dapat konteks +
+pilihan jelas; pengunjung yang sudah login dapat jalan pintas langsung ke
+kerjanya, tidak ada langkah ekstra yang mengganggu. `getDashboardRouteByRole()`
+dipakai apa adanya (fungsi yang sama dipakai `requireRole()`), tidak ada
+logic pemetaan role→dashboard baru yang ditulis ulang.
+
+Landing page (`src/app/page.tsx`) mengikuti persis pola visual
+`(public)/reports/create` dan `(public)/statistik-sla` (`min-h-screen
+bg-background px-4 py-10`, kartu eyebrow+judul+deskripsi) — tidak ada
+komponen/desain baru. Berisi 4 tombol: "Buat Laporan" (`/reports/create`),
+"Statistik SLA" (`/statistik-sla`), "Masuk" (`/auth/login`), "Daftar"
+(`/auth/register`). **Tetap tinggal langsung di `src/app/page.tsx`, TIDAK
+dipindah ke dalam grup `(public)`** — route group tidak menambah segmen
+URL, jadi `(public)/page.tsx` akan bentrok dengan `src/app/page.tsx` untuk
+path `/` yang sama (App Router akan menolak build). Karena root tidak
+butuh layout tambahan di luar `src/app/layout.tsx` yang sudah tanpa
+gerbang auth, tetap di lokasi aslinya memang struktur yang benar untuk
+kasus ini, bukan kompromi.
+
+**Diverifikasi dengan Playwright lewat browser sungguhan, 9 pemeriksaan,
+semua lolos**: root anonim tetap di `/` (bukan `/auth/login`) dan
+menampilkan landing page; keempat tombol diklik satu-satu, semua
+mendarat di tujuan yang benar; login sebagai `kepaladesa@gmail.com`
+(role `kepala_desa`, akun permanen) lalu buka root → auto-redirect ke
+`/dashboard/village`; login sebagai `demo.warga.1@lapor-aja.test` (role
+`public`, akun demo) lalu ulangi → auto-redirect ke `/dashboard/public`.
+Tidak ada akun baru dibuat untuk verifikasi ini (pakai akun permanen/demo
+yang sudah ada), jadi tidak ada data uji yang perlu dibersihkan. `npx tsc
+--noEmit` dan `npm run build` bersih — route `/` sekarang tercatat
+**dynamic** (`ƒ`) di output build (bukan `○` statis lagi), karena
+`getProfile()` membaca cookie sesi di setiap request — ini benar dan
+diharapkan, bukan regresi performa yang perlu dikhawatirkan.
 
 ## Aturan Kerja untuk Claude Code
 
