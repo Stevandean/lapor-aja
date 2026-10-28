@@ -9,6 +9,9 @@
 !.yarn/plugins
 !.yarn/releases
 !.yarn/versions
+AGENTS.MD
+CLAUDE.MD
+DATABASE.JSON
 
 # testing
 /coverage
