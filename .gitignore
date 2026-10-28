@@ -9,9 +9,6 @@
 !.yarn/plugins
 !.yarn/releases
 !.yarn/versions
-AGENTS.MD
-CLAUDE.MD
-DATABASE.JSON
 
 # testing
 /coverage
@@ -26,6 +23,15 @@ DATABASE.JSON
 # misc
 .DS_Store
 *.pem
+
+# AI instructions and Graphify files
+/agents.md
+/AGENTS.md
+/claude.md
+/CLAUDE.md
+/.agents/
+/graphify
+/graphify-out/
 
 # debug
 npm-debug.log*
