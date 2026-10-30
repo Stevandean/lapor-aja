@@ -6,11 +6,49 @@ import { promises as fs } from "fs";
 import path from "path";
 import { prisma } from "@/src/lib/prisma";
 import { getProfile } from "@/src/lib/auth/getProfile";
-import { getDashboardRouteByRole, ROUTES } from "@/src/lib/constants/routes";
+import { getDashboardRouteByRole } from "@/src/lib/constants/routes";
 import { createReportStatusLog } from "@/src/features/reports/statusLogs";
 import { ActionState } from "@/src/types/action";
 
 const UPLOADS_ROOT = path.join(process.cwd(), "public", "uploads", "reports");
+const ANONYMOUS_CITIZEN_EMAIL = "warga.anonim@lapor-aja.local";
+
+async function resolveReporterProfileId() {
+  const profile = await getProfile();
+
+  if (profile) {
+    if (profile.role !== "public") {
+      redirect(getDashboardRouteByRole(profile.role));
+    }
+
+    return profile.id;
+  }
+
+  const existingAnonymous = await prisma.profile.findUnique({
+    where: { email: ANONYMOUS_CITIZEN_EMAIL },
+    select: { id: true },
+  });
+
+  if (existingAnonymous) {
+    return existingAnonymous.id;
+  }
+
+  const createdAnonymous = await prisma.profile.create({
+    data: {
+      fullName: "Masyarakat Umum",
+      email: ANONYMOUS_CITIZEN_EMAIL,
+      passwordHash: "$2a$10$anonymousReporterAccountNotForDirectLogin000000000",
+      role: "public",
+      isActive: true,
+      notificationEmailEnabled: false,
+      notificationWhatsappEnabled: false,
+      notificationInternalEnabled: false,
+    },
+    select: { id: true },
+  });
+
+  return createdAnonymous.id;
+}
 
 function generateReportNumber() {
   const date = new Date();
@@ -28,15 +66,7 @@ export async function createReport(
   _prevState: ActionState,
   formData: FormData
 ): Promise<ActionState> {
-  const profile = await getProfile();
-
-  if (!profile) {
-    redirect(`${ROUTES.LOGIN}?redirect=${encodeURIComponent(ROUTES.REPORT_CREATE)}`);
-  }
-
-  if (profile.role !== "public") {
-    redirect(getDashboardRouteByRole(profile.role));
-  }
+  const reporterId = await resolveReporterProfileId();
 
   const title = String(formData.get("title") || "").trim();
   const description = String(formData.get("description") || "").trim();
@@ -107,7 +137,7 @@ export async function createReport(
     report = await prisma.report.create({
       data: {
         reportNumber: generateReportNumber(),
-        reporterId: profile.id,
+        reporterId,
         title,
         description,
         latitude,
@@ -149,7 +179,7 @@ export async function createReport(
       await prisma.reportPhoto.create({
         data: {
           reportId: report.id,
-          uploadedBy: profile.id,
+          uploadedBy: reporterId,
           filePath,
           photoUrl: filePath,
         },
@@ -159,17 +189,21 @@ export async function createReport(
         error instanceof Error ? error.message : "Gagal menyimpan data foto laporan."
       );
     }
-
-    await createReportStatusLog({
-      reportId: report.id,
-      oldStatus: null,
-      newStatus: "pending",
-      note: "Laporan dikirim oleh masyarakat.",
-    });
   }
 
+  await createReportStatusLog({
+    reportId: report.id,
+    oldStatus: null,
+    newStatus: "pending",
+    note: "Laporan dikirim oleh masyarakat.",
+    changedBy: reporterId,
+  });
+
+  revalidatePath("/");
   revalidatePath("/dashboard/public");
   revalidatePath("/dashboard/public/reports");
+  revalidatePath("/dashboard/admin");
+  revalidatePath("/dashboard/admin/reports");
 
   return {
     status: "success",

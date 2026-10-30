@@ -4,8 +4,8 @@ import {
   CheckCircle2,
   Clock3,
   FileText,
-  PlusCircle,
   Send,
+  Timer,
 } from "lucide-react";
 import { Button } from "@/src/components/ui/Button";
 import {
@@ -44,6 +44,13 @@ export default async function PublicDashboardPage() {
         </div>
 
         <div className="flex flex-wrap gap-3">
+          <Link href="/dashboard/public/sla">
+            <Button variant="outline">
+              <Timer className="mr-2 h-4 w-4" />
+              Statistik SLA
+            </Button>
+          </Link>
+
           <Link href="/dashboard/public/reports">
             <Button variant="outline">
               <FileText className="mr-2 h-4 w-4" />
@@ -111,12 +118,9 @@ export default async function PublicDashboardPage() {
                 Buat laporan pertama untuk mulai memantau progresnya.
               </p>
 
-              <Link href="/reports/create">
-                <Button className="mt-5">
-                  <PlusCircle className="mr-2 h-4 w-4" />
-                  Buat Laporan
-                </Button>
-              </Link>
+              <div className="mt-5 flex justify-center">
+                <CreateReportModal />
+              </div>
             </div>
           ) : (
             <div className="space-y-3">

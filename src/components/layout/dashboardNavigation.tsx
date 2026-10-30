@@ -209,6 +209,11 @@ export function getDashboardNavigation(role: UserRole): DashboardNavItem[] {
       href: "/dashboard/public/swadaya",
       icon: HeartHandshake,
     },
+    {
+      label: "Statistik SLA Desa",
+      href: "/dashboard/public/sla",
+      icon: Timer,
+    },
     settingsItem,
   ];
 }
